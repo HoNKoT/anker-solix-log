@@ -1,0 +1,3 @@
+# amon setup / amon cloud-setup が ~/.anker-monitor/venv に入れる部品 (Python 3.12 以上)
+SolixBLE
+anker-solix-api @ git+https://github.com/thomluther/anker-solix-api.git

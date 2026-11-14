@@ -1,0 +1,252 @@
+#!/bin/bash
+# amon — Anker Monitor の操作コマンド (gqm に倣った構成)
+#
+#   amon setup        初回: venv 作成 → 部品導入 (requirements.txt) → アプリ作成 → 起動
+#   amon deploy|up|r  このフォルダの変更を反映して再起動 (Swift/Python どちらを変えても)
+#   amon start|stop|restart   (restart は再ビルドしない。変更を反映するなら deploy)
+#   amon status       稼働状況と現在値
+#   amon open         ダッシュボードをブラウザで開く
+#   amon logs         バックエンドのログを流す
+#   amon run [args]   バックエンドを前面で動かす (デバッグ用: amon run --debug)
+#   amon demo         ダミー値で動かす (画面確認用。先に amon stop)
+#   amon autostart on|off   ログイン時に自動起動
+#   amon lan on|off   スマホなど同じ Wi-Fi の端末から見られるようにする (見るだけ。URL を表示)
+#   amon cloud-setup  クラウド(Wi-Fi経由)で読む部品を入れる (Python 3.12 以上が必要。足りなければ環境を作り直す)
+#   amon scan-all    周りのBluetooth機器を全部表示 (機種が見つからないとき用。先に amon stop)
+#   amon link         どこからでも amon で呼べるようにする (PATH 上にリンク作成)
+
+set -u
+
+# このスクリプトの本当の場所 (シンボリックリンクをたどる)
+SELF="$0"
+while [ -L "$SELF" ]; do
+  T="$(readlink "$SELF")"
+  case "$T" in /*) SELF="$T" ;; *) SELF="$(dirname "$SELF")/$T" ;; esac
+done
+SRC_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+
+APP="$HOME/Applications/AnkerMonitor.app"
+APP_BIN="$APP/Contents/MacOS/AnkerMonitor"
+DATA="$HOME/.anker-monitor"
+VENV="$DATA/venv"
+PY_DST="$DATA/anker_monitor.py"
+PORT=19877
+LABEL="dev.amon.anker-monitor"
+AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
+
+# ~/Documents 配下だとアプリが読むたびに権限を聞かれるので、実行用のコピーは ~/.anker-monitor に置く
+
+say()  { printf '\033[1m▶ %s\033[0m\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+err()  { printf '  \033[31m✗\033[0m %s\n' "$*" >&2; }
+
+find_python() {
+  local c min="${1:-12}"
+  for c in python3.14 python3.13 python3.12 python3.11 \
+           /opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 \
+           /usr/local/bin/python3 python3; do
+    if command -v "$c" >/dev/null 2>&1 &&
+       "$c" -c "import sys; sys.exit(0 if sys.version_info >= (3, $min) else 1)" 2>/dev/null; then
+      command -v "$c"; return 0
+    fi
+  done
+  return 1
+}
+
+backend_up() { curl -fsS --max-time 2 "http://localhost:$PORT/status" >/dev/null 2>&1; }
+app_running() { pgrep -f "$APP_BIN" >/dev/null 2>&1; }
+
+install_python_side() {
+  mkdir -p "$DATA"
+  if [ ! -x "$VENV/bin/python" ]; then
+    local py; py="$(find_python 12)" || { err "Python 3.12 以上がありません → brew install python@3.13"; return 1; }
+    say "Python 環境を作成中 ($py)"
+    "$py" -m venv "$VENV" || { err "venv の作成に失敗"; return 1; }
+  fi
+  if ! "$VENV/bin/python" -c 'import SolixBLE, anker_solix_api' 2>/dev/null; then
+    say "部品を導入中 (SolixBLE, anker-solix-api。git が必要: xcode-select --install)"
+    "$VENV/bin/pip" install -q --upgrade pip -r "$SRC_DIR/requirements.txt" \
+      || { err "部品の導入に失敗しました (git / ネットワークを確認)"; return 1; }
+  fi
+  cp "$SRC_DIR/anker_monitor.py" "$PY_DST"
+  cp "$SRC_DIR/dashboard.html" "$DATA/dashboard.html"
+  printf '{"python": "%s", "script": "%s"}\n' "$VENV/bin/python" "$PY_DST" > "$DATA/launch.json"
+  ok "バックエンドとダッシュボードを反映: $DATA"
+}
+
+build_app() {
+  xcrun -f swiftc >/dev/null 2>&1 || { err "swiftc がありません → xcode-select --install"; return 1; }
+  say "メニューバーアプリをビルド中..."
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+  xcrun swiftc -O "$SRC_DIR/AnkerMonitor.swift" -o /tmp/AnkerMonitor.new \
+      -framework AppKit -framework WebKit -framework UserNotifications || { err "Swift のビルドに失敗しました"; return 1; }
+  cp "$SRC_DIR/Info.plist" "$APP/Contents/Info.plist"
+  install -m 755 /tmp/AnkerMonitor.new "$APP_BIN" && rm -f /tmp/AnkerMonitor.new
+  codesign --force --deep -s - "$APP" 2>/dev/null || warn "codesign に失敗 (起動できなければ再実行してください)"
+  ok "アプリを作成: $APP"
+}
+
+cmd_start() {
+  app_running && { ok "すでに起動しています"; return 0; }
+  [ -d "$APP" ] || { err "アプリがありません → amon setup"; return 1; }
+  open "$APP"
+  local i
+  for i in 1 2 3 4 5 6 7 8; do backend_up && { ok "起動しました (メニューバーを見てください)"; return 0; }; sleep 1; done
+  warn "バックエンドの応答待ちです。amon logs で様子を見てください"
+}
+
+cmd_stop() {
+  if app_running; then
+    osascript -e 'tell application "AnkerMonitor" to quit' >/dev/null 2>&1 || pkill -TERM -f "$APP_BIN"
+    local i; for i in 1 2 3 4 5 6; do app_running || break; sleep 1; done
+  fi
+  # 手動で起動したバックエンドが残っていれば止める
+  pkill -TERM -f "anker_monitor.py" 2>/dev/null
+  sleep 1
+  ok "停止しました"
+}
+
+cmd_setup() {
+  say "セットアップ"
+  install_python_side || return 1
+  build_app || return 1
+  cmd_start
+  cat <<'EOF'
+
+次のことが起きます:
+  ・初回は macOS が「AnkerMonitor が Bluetooth を使おうとしています」と聞くので「許可」を押す
+    (出なかった/拒否した場合: システム設定 > プライバシーとセキュリティ > Bluetooth)
+  ・ポタ電の画面を点けて、スマホの Anker アプリは終了しておく
+  ・メニューバーに電池アイコンと % が出ます。クリックでダッシュボード、右クリックでメニュー
+EOF
+}
+
+cmd_deploy() {
+  say "反映して再起動"
+  python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
+      "$SRC_DIR/anker_monitor.py" || { err "anker_monitor.py に構文エラーがあります"; return 1; }
+  cmd_stop
+  install_python_side || return 1
+  build_app || return 1
+  cmd_start
+}
+
+cmd_status() {
+  if app_running; then ok "メニューバーアプリ: 起動中"; else warn "メニューバーアプリ: 停止"; fi
+  if backend_up; then
+    ok "バックエンド: 応答あり (http://localhost:$PORT)"
+    curl -fsS "http://localhost:$PORT/status" | "$VENV/bin/python" -c '
+import json, sys
+for d in json.load(sys.stdin)["devices"]:
+    print("   %s [%s]" % (d.get("name") or d["id"], d.get("state")))
+    print("   バッテリー %s%%  入力 %sW  出力 %sW  %s" % (d.get("battery"), d.get("power_in"), d.get("power_out"), d.get("charging") or ""))
+    if d.get("detail"): print("   ", d["detail"])
+' 2>/dev/null
+  else
+    warn "バックエンド: 応答なし"
+  fi
+  [ -f "$AGENT" ] && ok "ログイン時の自動起動: 有効" || echo "   ログイン時の自動起動: 無効 (amon autostart on)"
+}
+
+cmd_lan() {
+  case "${1:-}" in
+    on)  mkdir -p "$DATA"; touch "$DATA/lan"; cmd_stop; cmd_start; lan_urls
+         warn "初回は macOS が「python への受信接続を許可しますか」と聞くので「許可」を選んでください。同じ Wi-Fi の端末からだけ、見るだけで開けます" ;;
+    off) rm -f "$DATA/lan"; cmd_stop; cmd_start; ok "LAN への公開をやめました (このMacからだけ)" ;;
+    *)   if [ -f "$DATA/lan" ]; then ok "LAN 公開: オン"; lan_urls; else say "LAN 公開: オフ (amon lan on で有効)"; fi ;;
+  esac
+}
+
+lan_urls() {
+  local h ip
+  h="$(scutil --get LocalHostName 2>/dev/null)"
+  [ -n "$h" ] && say "スマホ用 URL: http://$h.local:$PORT"
+  for ip in $(ipconfig getifaddr en0 2>/dev/null) $(ipconfig getifaddr en1 2>/dev/null); do say "スマホ用 URL: http://$ip:$PORT"; done
+}
+
+cmd_autostart() {
+  local dom="gui/$(id -u)"
+  case "${1:-}" in
+    on)
+      mkdir -p "$HOME/Library/LaunchAgents"
+      cat > "$AGENT" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>$APP</string></array>
+  <key>RunAtLoad</key><true/>
+</dict></plist>
+EOF
+      launchctl bootout "$dom/$LABEL" 2>/dev/null
+      launchctl bootstrap "$dom" "$AGENT" 2>/dev/null || launchctl load "$AGENT" 2>/dev/null
+      ok "ログイン時に自動起動します" ;;
+    off)
+      launchctl bootout "$dom/$LABEL" 2>/dev/null || launchctl unload "$AGENT" 2>/dev/null
+      rm -f "$AGENT"
+      ok "自動起動をやめました" ;;
+    *) echo "使い方: amon autostart on|off"; return 1 ;;
+  esac
+}
+
+cmd_link() {
+  local dir="" d
+  for d in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do
+    case ":$PATH:" in *":$d:"*) [ -d "$d" ] && [ -w "$d" ] && { dir="$d"; break; } ;; esac
+  done
+  if [ -z "$dir" ]; then
+    dir="$HOME/.local/bin"; mkdir -p "$dir"
+    local rc="$HOME/.zshrc"
+    if ! grep -qs '\.local/bin' "$rc"; then
+      printf '\n# amon (Anker Monitor)\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$rc"
+      echo "PATH を $rc に追記しました。新しいターミナルを開くか: source ~/.zshrc"
+    else
+      echo "$rc に .local/bin の設定が既にあります (新しいターミナルで有効)"
+    fi
+  fi
+  ln -sf "$SRC_DIR/amon" "$dir/amon" && echo "リンク作成: $dir/amon -> $SRC_DIR/amon"
+  echo "どこからでも: amon restart / amon deploy / amon status"
+}
+
+cmd_cloud_setup() {
+  mkdir -p "$DATA"
+  local need=0
+  if [ -x "$VENV/bin/python" ] && ! "$VENV/bin/python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then need=1; fi
+  if [ ! -x "$VENV/bin/python" ] || [ "$need" = 1 ]; then
+    local py; py="$(find_python 12)" || { err "Python 3.12 以上がありません → brew install python@3.13"; return 1; }
+    [ "$need" = 1 ] && warn "いまの Python 環境は 3.12 未満なので作り直します"
+    cmd_stop
+    rm -rf "$VENV"
+    say "Python 環境を作成中 ($py)"
+    "$py" -m venv "$VENV" || { err "venv の作成に失敗"; return 1; }
+  fi
+  say "部品を導入中 (SolixBLE, anker-solix-api)"
+  "$VENV/bin/pip" install -q --upgrade pip -r "$SRC_DIR/requirements.txt" \
+    || { err "導入に失敗しました (git が必要です: xcode-select --install)"; return 1; }
+  ok "導入しました"
+  cmd_stop
+  install_python_side && cmd_start
+  echo "ダッシュボードの「機器」タブ > クラウド から Anker のメールアドレスとパスワードでログインしてください。"
+}
+
+usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+case "${1:-}" in
+  setup)     cmd_setup ;;
+  deploy|up|r) cmd_deploy ;;
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_stop; cmd_start ;;
+  status)    cmd_status ;;
+  open)      open "http://localhost:$PORT" ;;
+  logs)      tail -n 50 -f "$DATA/backend.log" ;;
+  run)       shift; install_python_side && exec "$VENV/bin/python" "$PY_DST" "$@" ;;
+  cloud-setup) cmd_cloud_setup ;;
+  scan-all)  install_python_side && exec "$VENV/bin/python" "$PY_DST" --scan-all ;;
+  demo)      install_python_side && exec "$VENV/bin/python" "$PY_DST" --demo ;;
+  link)      cmd_link ;;
+  lan)       shift; cmd_lan "${1:-}" ;;
+  autostart) shift; cmd_autostart "${1:-}" ;;
+  *)         usage ;;
+esac
