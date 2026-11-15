@@ -34,9 +34,20 @@ select,input{font:inherit;color:var(--fg);background:var(--soft);border:1px soli
 .dev .fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,color-mix(in srgb,var(--fc,var(--pct)) 22%,transparent),color-mix(in srgb,var(--fc,var(--pct)) 10%,transparent));
   transition:height .8s ease,background .4s}
 .dev .body{position:relative;padding:14px}
-.head{display:flex;align-items:center;gap:10px}
-.ic svg{width:34px;height:34px;display:block}
-.titles{min-width:0;flex:1}
+.flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px}
+.flow .ic svg{width:104px;height:auto;display:block}
+.fside{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:calc(17px*var(--fs,1));font-weight:700;white-space:nowrap;transition:opacity .3s}
+.fside.l{justify-content:flex-end}.fside.r{justify-content:flex-start}
+.fside b{font-weight:800}.fside small{font-size:.62em;color:var(--sub);font-weight:700;margin-left:1px}
+.fside svg{width:calc(20px*var(--fs,1));height:calc(20px*var(--fs,1));flex:none}
+.fside.l svg{color:var(--in)}.fside.l b{color:var(--in)}.fside.r svg,.fside.r b{color:var(--out)}
+.fside.zero{opacity:.28}.fside .arr{color:var(--sub);font-weight:400;font-size:.8em}
+.titles{min-width:0;text-align:center;margin-top:6px}
+.titles .nm2{display:flex;justify-content:center;align-items:center;gap:6px}
+.model{font-size:calc(10px*var(--fs,1))}
+.share{display:flex;align-items:center;gap:6px;justify-content:center;margin-top:8px;font-size:calc(11px*var(--fs,1));color:var(--sub)}
+.share svg{width:calc(14px*var(--fs,1));height:calc(14px*var(--fs,1))}
+.share b{color:var(--fg)}
 .name{font-weight:700;font-size:calc(14px*var(--fs,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .model{color:var(--sub);font-size:calc(11px*var(--fs,1))}
 .chip{font-size:calc(11px*var(--fs,1));padding:2px 8px;border-radius:10px;background:var(--line);color:var(--sub);white-space:nowrap}
@@ -66,8 +77,8 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .dbig .yen b{color:var(--in)}
 .price{display:flex;align-items:center;gap:6px;font-size:calc(12px*var(--fs,1));color:var(--sub);margin-top:10px}
 .price input{width:70px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;padding:3px 6px;font:inherit;text-align:right}
-.main{display:flex;align-items:center;gap:10px;margin:10px 0 2px}
-.mleft{display:flex;align-items:baseline;gap:4px 10px;flex-wrap:wrap;min-width:0}
+.main{display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 4px}
+.mleft{display:flex;align-items:baseline;justify-content:center;gap:4px 10px;flex-wrap:wrap;min-width:0}
 .mright{margin-left:auto;display:flex;flex-direction:column;gap:3px;align-items:flex-end;font-variant-numeric:tabular-nums}
 .tot{display:flex;align-items:center;gap:5px;font-size:calc(16px*var(--fs,1));font-weight:700;white-space:nowrap}
 .tot em{font-style:normal;font-size:calc(9px*var(--fs,1));color:var(--sub);font-weight:700;letter-spacing:.6px}
@@ -244,6 +255,9 @@ const pcol=k=>PCOL[k]||'#888';
 const INICON={
   solar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><title>ソーラー</title><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
   other:'<svg viewBox="0 0 24 24" fill="currentColor"><title>電気 (AC / USB 給電)</title><path d="M13 2L5 13.5h5.5L9.5 22 19 9.5h-5.8z"/></svg>'};
+INICON.usb='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><title>USB</title><path d="M12 3v14M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 11l4-3v-2M12 14l-4-3V9"/><rect x="14.5" y="3.5" width="3" height="3" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg>';
+INICON.plug='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>AC / DC 出力</title><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></svg>';
+INICON.share='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>電力共有</title><path d="M4 8h14l-3-3M20 16H6l3 3"/></svg>';
 function fmtRemain(h,chg){if(h==null)return '';const m=Math.round(h*60);const s=m>=60?Math.floor(m/60)+'時間'+(m%60?m%60+'分':''):m+'分';return (chg==='CHARGING'?'満充電まで ':'あと ')+s}
 function fmtT(t,span){const d=new Date(t*1000);const hm=pad2(d.getHours())+':'+pad2(d.getMinutes());return span>30*3600?`${d.getMonth()+1}/${d.getDate()} ${hm}`:hm}
 function niceMax(v){if(v<=0)return 50;const e=Math.pow(10,Math.floor(Math.log10(v)));for(const m of [1,2,5,10]){if(v<=m*e)return m*e}return 10*e}
@@ -273,6 +287,36 @@ function iconSVG(kind,pct,state,usb){ // state: 'charging' | 'low' | ''
     `<g clip-path="url(#${id})"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" fill="currentColor" opacity=".18"/>`+
     `<rect x="${bx}" y="${fy}" width="${bw}" height="${by+bh-fy}" fill="${fillc}" opacity="${pct==null?0:.95}"/></g>`+
     `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${r}" fill="none" stroke="${line}" stroke-width="1.4" opacity="${pct==null?.4:.85}"/>${handle}${state==='charging'&&pct!=null?bolt:''}${usb?usbBadge(bx+bw-9.5,by+bh-3.4):''}</svg>`;
+}
+/* カード用の大きなアイコン: 機種の形 (取っ手・前面のポート・ディスプレイ) に寄せて描く。残量は本体の塗りで見せる */
+function bigIconSVG(kind,pct,state,usb){
+  const id='b'+(++iconN),lv=pct==null?0:Math.max(0,Math.min(100,pct));
+  const fillc=state==='charging'?'var(--in)':state==='out'?'var(--out)':state==='low'?'var(--low)':'currentColor';
+  const line=state==='low'?'var(--low)':'currentColor';
+  const G={c300dc:{x:5,y:11,w:38,h:22,r:3.5},c2000g2:{x:2.5,y:8,w:43,h:25,r:4.5},compact:{x:5,y:11,w:38,h:22,r:3.5},box:{x:3,y:10,w:42,h:23,r:4},large:{x:2.5,y:8,w:43,h:25,r:4.5}}[kind]||{x:4,y:10,w:40,h:23,r:4};
+  const {x,y,w,h,r}=G,fy=y+h*(1-lv/100),lc=`fill="none" stroke="${line}" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" opacity=".8"`;
+  const dot=(cx,cy,rr)=>`<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="${line}" stroke-width="1" opacity=".75"/>`;
+  let det='';
+  if(kind==='c300dc'||kind==='compact'){ // 小型: 上に持ち手、前面に USB ポートとシガー口
+    det=`<path d="M14 ${y} V5.5 a2 2 0 0 1 2-2 H32 a2 2 0 0 1 2 2 V${y}" ${lc}/>`+
+      `<rect x="${x+4}" y="${y+4}" width="9" height="4" rx="1" ${lc}/>`+
+      `<rect x="${x+17}" y="${y+14.5}" width="4.2" height="2.6" rx="1" ${lc}/><rect x="${x+23}" y="${y+14.5}" width="4.2" height="2.6" rx="1" ${lc}/>`+dot(x+w-6,y+15.8,2.6)+
+      `<path d="M${x+4} ${y+h-4} h6" ${lc}/>`;
+  }else if(kind==='c2000g2'||kind==='large'){ // 大型: 上面の凹んだ持ち手、前面ディスプレイ、ポート列、脚
+    det=`<rect x="14" y="${y-4.2}" width="20" height="6.4" rx="2.2" ${lc}/>`+
+      `<rect x="${x+5}" y="${y+4}" width="14" height="6" rx="1.4" ${lc}/>`+
+      `<rect x="${x+5}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/><rect x="${x+11}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/><rect x="${x+17}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/>`+dot(x+w-8,y+10,2.8)+dot(x+w-8,y+17,2.8)+
+      `<path d="M${x+5} ${y+h} v2.2 M${x+w-5} ${y+h} v2.2" ${lc} stroke-width="1.8"/>`;
+  }else{ // 中型
+    det=`<path d="M15 ${y} V6.5 a2 2 0 0 1 2-2 H31 a2 2 0 0 1 2 2 V${y}" ${lc}/>`+
+      `<rect x="${x+5}" y="${y+4}" width="11" height="5" rx="1.2" ${lc}/>`+dot(x+w-8,y+8,2.6)+dot(x+w-8,y+16,2.6)+`<path d="M${x+5} ${y+16} h14" ${lc}/>`;
+  }
+  const bp=(()=>{const cx=x+w/2,cy=y+h/2,bh=13,bw=bh*.62;return [[.68,0],[0,.58],[.46,.58],[.30,1],[1,.38],[.54,.38]].map(([u,v])=>(cx-bw/2+u*bw).toFixed(2)+','+(cy-bh/2+v*bh).toFixed(2)).join(' ')})();
+  const bolt=`<polygon points="${bp}" fill="#fff" stroke="#000" stroke-opacity=".55" stroke-width=".8" stroke-linejoin="round"/>`;
+  return `<svg viewBox="0 0 48 40"><defs><clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/></clipPath></defs>`+
+    `<g clip-path="url(#${id})"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="currentColor" opacity=".16"/>`+
+    `<rect x="${x}" y="${fy}" width="${w}" height="${y+h-fy}" fill="${fillc}" opacity="${pct==null?0:.9}"/></g>`+
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="none" stroke="${line}" stroke-width="1.6" opacity="${pct==null?.4:.9}"/>${det}${state==='charging'&&pct!=null?bolt:''}${usb?usbBadge(x+w-10,y+h-3.6):''}</svg>`;
 }
 const hasUsbOut=d=>(d.ports||[]).some(p=>p.dir==='out'&&p.w>0&&p.key.startsWith('usb'));
 const devState=d=>{const i=d.power_in||0,o=d.power_out||0;
@@ -420,12 +464,14 @@ async function copyRecent(c,a){
 function ensureCard(d){
   let c=S.cards[d.id];if(c)return c;
   const root=el('div','card dev');const fill=el('div','fill');const body=el('div','body');root.append(fill,body);
-  const head=el('div','head');const ic=el('span','ic');const tt=el('div','titles');const nm=el('div','name');const md=el('div','model');tt.append(nm,md);
-  const chip=el('span','chip');const info=el('button','info','ⓘ');info.style.display='none';info.setAttribute('aria-label','待機電力について');
+  // 左: 入力 (USB/ソーラー) → 真ん中: 機種アイコン → 右: 出力 (USB など)
+  const head=el('div','flow');const ic=el('span','ic');const tin=el('div','fside l'),tout=el('div','fside r');head.append(tin,ic,tout);
+  const tt=el('div','titles');const nmr=el('div','nm2');const nm=el('div','name');const chip=el('span','chip');
+  const info=el('button','info','ⓘ');info.style.display='none';info.setAttribute('aria-label','待機電力について');
   const infoTip=el('div','infotip');infoTip.hidden=true;info.onclick=e=>{e.stopPropagation();infoTip.hidden=!infoTip.hidden};
-  head.append(ic,tt,info,chip);
-  const main=el('div','main');const ml=el('div','mleft');const pct=el('div','pct');const sub=el('div','sub');ml.append(pct,sub);
-  const mr=el('div','mright');const tin=el('div','tot in'),tout=el('div','tot out');mr.append(tin,tout);main.append(ml,mr);
+  nmr.append(nm,chip,info);const md=el('div','model');tt.append(nmr,md);
+  const main=el('div','main');const ml=el('div','mleft');const pct=el('div','pct');const sub=el('div','sub');ml.append(pct,sub);main.append(ml);
+  const share=el('div','share');share.style.display='none';
   const outs=el('div','outs');const sw=el('div','sw');const evt=el('div','evt');
   const detail=el('div','detail');
   // グラフは見たいときだけ開く (開閉は全カード共通で覚える)
@@ -436,26 +482,33 @@ function ensureCard(d){
   const startOpen=lsGet('amon-graph','0')==='1';det.open=startOpen;det.classList.toggle('is-open',startOpen);
   dsum.addEventListener('click',e=>{e.preventDefault();setFold(det,!det.classList.contains('is-open'),true);
     for(const o of Object.values(S.cards))if(o.det!==det)setFold(o.det,det.classList.contains('is-open'),false)});
-  body.append(head,infoTip,main,outs,sw,evt,detail,det);
+  body.append(head,tt,infoTip,main,share,outs,sw,evt,detail,det);
   $('cards').append(root);
-  c=S.cards[d.id]={root,fill,ic,nm,md,chip,pct,sub,info,infoTip,tin,tout,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
+  c=S.cards[d.id]={root,fill,ic,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
   cardHover(c);
   return c;
 }
 function updateCard(c,d){
   const st=devState(d);
-  c.ic.innerHTML=iconSVG(d.icon,d.battery,st,hasUsbOut(d));
+  c.ic.innerHTML=bigIconSVG(d.icon,d.battery,st,hasUsbOut(d));
   c.nm.textContent=d.name;c.md.textContent=d.model_label+(d.via?' · '+VIA[d.via]:'');
-  const [lab,cls]=STATE[d.state]||[d.state,''];c.chip.textContent=lab;c.chip.className='chip '+cls;
+  const [lab,cls]=STATE[d.state]||[d.state,''];c.chip.textContent=d.state==='connected'?'':lab;c.chip.className='chip '+cls;c.chip.style.display=d.state==='connected'?'none':'';
   c.pct.replaceChildren(document.createTextNode(d.battery==null?'--':d.battery),el('small','','%'));
   const idle=(d.power_in||0)<1&&(d.power_out||0)<1;
   c.sub.textContent=idle?'':[CHG[d.charging]||'',fmtRemain(d.remaining_h,d.charging)].filter(Boolean).join('  ');
   c.info.style.display=idle&&d.standby_w!=null?'':'none';
   if(!c.info.style.display){c.infoTip.textContent='待機電力の目安: 入力も出力も 0W のとき、「いまの残量 × 電池容量 ÷ 機器が出している残り時間」で割り出した値です。機器自身の見積もりを使った目安で、実測ではありません (AC出力やディスプレイが動いていると、実際はもっと増えます)。現在の見積もり: 残量 '+d.battery+'% / 残り '+d.remaining_h+' 時間 → 約 '+d.standby_w+' W。'}
   // 右端: 入力と出力の合計 (2行)。入力は、ソーラー / AC / その他をアイコンで見分ける
-  const kinds=[...new Set((d.ports||[]).filter(p=>p.dir==='in'&&p.w>0).map(p=>p.key==='solar'?'solar':'other'))];
-  c.tin.innerHTML='<em>IN</em>'+kinds.map(k=>INICON[k]).join('')+'<b>'+fW(d.power_in)+'</b>';
-  c.tout.innerHTML='<em>OUT</em><b>'+fW(d.power_out)+'</b>';
+  // 入力: ソーラーなら太陽、USB / AC 給電なら電気マーク。出力: USB があれば USB、AC / DC があればプラグ
+  const kinds=[...new Set((d.ports||[]).filter(p=>p.dir==='in'&&p.w>0&&!p.shared).map(p=>p.key==='solar'?'solar':'other'))];
+  const okinds=[...new Set((d.ports||[]).filter(p=>p.dir==='out'&&p.w>0&&!p.shared).map(p=>p.key.startsWith('usb')?'usb':'plug'))];
+  const wv=x=>{const v=Math.round(x||0);return '<b>'+v+'</b><small>W</small>'};
+  c.tin.innerHTML=kinds.map(k=>INICON[k]).join('')+wv(d.power_in)+'<span class="arr">▸</span>';
+  c.tout.innerHTML='<span class="arr">▸</span>'+okinds.map(k=>INICON[k]).join('')+wv(d.power_out);
+  c.tin.classList.toggle('zero',(d.power_in||0)<1);c.tout.classList.toggle('zero',(d.power_out||0)<1);
+  // 電力共有 (機器どうしの USB 給電): 入出力には数えない
+  const shr=d.shared||[];c.share.style.display=shr.length?'':'none';
+  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ共有中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から共有中 '+x.w+' W')+' (入出力に数えません)</span>').join('<br>');
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
   const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.outs.style.display=olist.length?'':'none';
   // スイッチの ON/OFF (読み取りのみ)
@@ -656,15 +709,15 @@ function renderStorage(){
     // 記録間隔 (これから) と、すでにあるログの間引き (平均化。Wh はほぼ変わらない)
     const ri=el('div','row');const rg=el('div','grow g-nw');const si=el('select');
     for(const v of [10,30,60]){const o=el('option','',v+'秒ごと');o.value=v;si.append(o)}
-    si.value=S.sampleInt||30;
-    si.onchange=async()=>{try{const r=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sample_interval:+si.value})});S.sampleInt=r.sample_interval;S.storeMsg='記録間隔を '+si.value+' 秒にしました (平均して保存します)'}catch(e){S.storeMsg='変更できませんでした: '+e.message}renderStorage()};
+    si.value=S.sampleInt||10;
+    si.onchange=async()=>{try{const r=await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sample_interval:+si.value})});S.sampleInt=r.sample_interval;S.storeMsg='記録間隔を '+si.value+' 秒にしました'}catch(e){S.storeMsg='変更できませんでした: '+e.message}renderStorage()};
     rg.append(document.createTextNode('これからの記録間隔 '),si);ri.append(rg);box.append(ri);
-    const rc=el('div','row');rc.append(el('div','grow','いまある履歴を 30 秒ごとの平均に間引く (電力量はほぼ変わりません)'));
+    const rc=el('div','row');rc.append(el('div','grow','いまある履歴をすべて 30 秒ごとの平均に間引く (直近も含む。電力量はほぼ変わりません)'));
     if(ask&&ask.kind==='compact'){const y=el('button','btn danger sm','間引く');y.onclick=async()=>{try{const r=await post('/api/history/compact',{interval:30});S.store=r.storage;S.storeMsg=`${r.before.toLocaleString()} 件 → ${r.after.toLocaleString()} 件にしました。いまのデータ量は ${fBytes(r.storage.bytes)} です。`}catch(e){S.storeMsg='間引けませんでした: '+e.message}S.storeAsk=null;renderStorage();if(S.tab==='history')loadHistory()};
       const n=el('button','btn ghost sm','やめる');n.onclick=()=>{S.storeAsk=null;renderStorage()};rc.append(el('span','sub','瞬間のピークは丸まります'),y,n)}
     else{const b=el('button','btn ghost sm','間引く…');b.onclick=()=>{S.storeAsk={kind:'compact'};renderStorage()};rc.append(b)}
     box.append(rc);
-    box.append(el('div','sub','節電の記録は別のテーブルに保存しているので、履歴を間引いたり消したりしても残ります。'));
+    box.append(el('div','sub','直近3日は細かいまま残し、それより古い日は、節電記録を確定してから自動で30秒平均に間引きます。節電の記録は別テーブルなので、履歴を間引いたり消したりしても残ります。'));
   }
   if(S.storeMsg)box.append(el('div','okmsg',S.storeMsg));
   for(const d of st.devices){const r=el('div','sub',`${d.name}: ${d.samples.toLocaleString()} 件 (${fDay(d.oldest)} 〜)`);box.append(r)}

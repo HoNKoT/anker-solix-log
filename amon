@@ -163,6 +163,11 @@ lan_urls() {
   h="$(scutil --get LocalHostName 2>/dev/null)"
   [ -n "$h" ] && say "スマホ用 URL: http://$h.local:$PORT"
   for ip in $(ipconfig getifaddr en0 2>/dev/null) $(ipconfig getifaddr en1 2>/dev/null); do say "スマホ用 URL: http://$ip:$PORT"; done
+  # Tailscale (VPN) が入っていれば、外出先用の URL も出す
+  local ts; ts="$(command -v tailscale || ls /Applications/Tailscale.app/Contents/MacOS/Tailscale 2>/dev/null | head -1)"
+  if [ -n "$ts" ]; then
+    for ip in $("$ts" ip -4 2>/dev/null); do say "外出先用 URL (Tailscale): http://$ip:$PORT"; done
+  fi
 }
 
 cmd_autostart() {

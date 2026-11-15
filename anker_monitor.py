@@ -50,6 +50,9 @@ LOG = logging.getLogger("anker-monitor")
 DATA_DIR = Path(os.environ.get("ANKER_MONITOR_HOME", Path.home() / ".anker-monitor"))
 HTML_FILE = Path(__file__).resolve().with_name("dashboard.html")
 BASE_TICK = 10  # 秒ごとに現在値を拾う (これを平均して、履歴には SAMPLE_INTERVAL ごとに1行)
+SHARE_MIN_W = 5  # 電力共有とみなす最小の W
+SHARE_ABS_W = 10  # 出力と入力の差がこれ以下 (または SHARE_REL 以下) なら「ほぼ同じ量」
+SHARE_REL = 0.25  # (変換ロスぶんの差を許す)
 RAW_KEEP_DAYS = 3  # 直近この日数ぶんは細かい (SAMPLE_INTERVAL) まま残し、それより古い日は THIN_INTERVAL 秒に間引く
 THIN_INTERVAL = 30
 SAMPLE_INTERVAL = 10  # 履歴へ書く間隔 (秒)。設定 (sample_interval) で 10 / 30 / 60 に変えられる
@@ -834,6 +837,44 @@ def build_ports(values: dict[str, int], p_in, p_out) -> list[dict]:
     return ports
 
 
+def find_sharing(vals: dict[str, dict]) -> dict[str, list[dict]]:
+    """機器どうしの「電力共有」を見つける。
+    A の USB-C 出力と、B の USB 入力 (ソーラー以外の入力ポート) がほぼ同じ量なら、そのぶんは
+    機器の間を行き来しているだけ (消費でも発電でもない) とみなす。戻り値: 機器ID → [{key, dir, w, peer}]"""
+    out: dict[str, list[dict]] = {}
+    live = {i: v for i, v in vals.items() if v.get("state") == "connected"}
+    for a, va in live.items():
+        for b, vb in live.items():
+            if a == b:
+                continue
+            for pa in va.get("ports") or []:
+                if pa["dir"] != "out" or not pa["key"].startswith("usb_c") or pa["w"] < SHARE_MIN_W:
+                    continue
+                if any(x["key"] == pa["key"] for x in out.get(a, [])):
+                    continue
+                for pb in vb.get("ports") or []:
+                    if pb["dir"] != "in" or pb["key"] not in ("other_in", "ac_in") or pb["w"] < SHARE_MIN_W:
+                        continue
+                    if any(x["key"] == pb["key"] for x in out.get(b, [])):
+                        continue
+                    if abs(pa["w"] - pb["w"]) <= max(SHARE_ABS_W, SHARE_REL * max(pa["w"], pb["w"])):
+                        out.setdefault(a, []).append({"key": pa["key"], "dir": "out", "w": pa["w"], "peer": b})
+                        out.setdefault(b, []).append({"key": pb["key"], "dir": "in", "w": pb["w"], "peer": a})
+                        break
+    return out
+
+
+def net_of_sharing(item: dict, shares: list[dict]) -> None:
+    """共有ぶんを、入力・出力の合計から引き、ポートに shared の印を付ける (item を直接書き換える)。"""
+    keys = {(x["key"], x["dir"]) for x in shares}
+    item["ports"] = [{**p, "shared": True} if (p["key"], p["dir"]) in keys else p for p in item.get("ports") or []]
+    for x in shares:
+        k = "power_in" if x["dir"] == "in" else "power_out"
+        if item.get(k) is not None:
+            item[k] = max(0, item[k] - x["w"])
+    item["shared"] = shares
+
+
 class BleSource(Source):
     """SolixBLE 経由で1台読む。切れたら探し直して繋ぎ直す。"""
 
@@ -1495,14 +1536,17 @@ class Manager:
         while True:
             await asyncio.sleep(BASE_TICK)
             now = int(time.time())
+            shared = self.sharing()  # 機器どうしの電力共有ぶんは、入出力にも履歴にも数えない
             for d in self.registry.list():
-                v = self.store.get(d["id"])
+                v = dict(self.store.get(d["id"]))
                 if v.get("state") != "connected" or v.get("battery") is None:
                     continue
+                if d["id"] in shared:
+                    net_of_sharing(v, shared[d["id"]])
                 buf.setdefault(d["id"], []).append({
                     "pct": v["battery"], "pin": v.get("power_in") or 0, "pout": v.get("power_out") or 0,
                     "temp": v.get("temperature"), "chg": v.get("charging"),
-                    "ports": {p["key"]: p["w"] for p in v.get("ports") or [] if p["w"] > 0}})
+                    "ports": {p["key"]: p["w"] for p in v.get("ports") or [] if p["w"] > 0 and not p.get("shared")}})
             if time.time() - last_flush >= SAMPLE_INTERVAL - 1 and buf:
                 samples, ports = [], []
                 for dev, xs in buf.items():
@@ -1531,8 +1575,12 @@ class Manager:
                 except Exception as e:  # noqa: BLE001
                     LOG.warning("節電記録の更新・間引きに失敗: %s", e)
 
+    def sharing(self) -> dict[str, list[dict]]:
+        return find_sharing({d["id"]: self.store.get(d["id"]) for d in self.registry.list()})
+
     def snapshot(self) -> dict:
         devs = []
+        shared = self.sharing()
         for d in self.registry.list():
             m = MODELS.get(d["model"], {})
             item = {
@@ -1544,6 +1592,12 @@ class Manager:
                 "ports": [], "charging": "UNKNOWN", "detail": "",
             }
             item.update(self.store.get(d["id"]))
+            shares = shared.get(d["id"])
+            if shares:
+                net_of_sharing(item, shares)
+                for x in shares:
+                    pd = self.registry.get(x["peer"]) if hasattr(self.registry, "get") else None
+                    x["peer_name"] = (pd or {}).get("name") or x["peer"]
             cap, b_, rh_ = MODEL_WH.get(d["model"]), item.get("battery"), item.get("remaining_h")
             if cap and b_ is not None and rh_ and (item.get("power_in") or 0) == 0 and (item.get("power_out") or 0) == 0:
                 item["standby_w"] = round(b_ / 100 * cap / rh_, 1)  # 入出力 0W のとき: 残量 ÷ 機器の残り時間 ≒ 待機消費 (目安)
