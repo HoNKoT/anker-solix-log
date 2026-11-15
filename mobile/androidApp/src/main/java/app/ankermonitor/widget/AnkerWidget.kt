@@ -2,6 +2,8 @@ package app.ankermonitor.widget
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -44,8 +46,12 @@ import java.util.Locale
 
 class AnkerWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val snapshot = context.appContainer.storage.snapshot.first()
+        val storage = context.appContainer.storage
+        val initial = storage.snapshot.first()
         provideContent {
+            // updateAll() はセッションが生きている間 (約 45 秒) provideGlance を呼び直さないので、
+            // 置いた直後の refreshNow やアプリからの反映を拾うには、合成の中で購読しておく必要がある
+            val snapshot by storage.snapshot.collectAsState(initial)
             GlanceTheme {
                 WidgetContent(snapshot)
             }

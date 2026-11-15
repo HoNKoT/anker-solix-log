@@ -37,7 +37,7 @@ val Device.powerFlow: PowerFlow
 /** 値が無いときの状態の言い方 (メニューバーアプリのツールチップと同じ) */
 val Device.stateLabel: String
     get() = when (state) {
-        "connected" -> if (battery == null) "値を待っています…" else "接続中"
+        "connected" -> if (battery == null) "値を待っています…" else "接続済み"
         "connecting" -> "接続中…"
         "searching" -> "探しています…"
         else -> "オフライン"

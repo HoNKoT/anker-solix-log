@@ -11,6 +11,7 @@ import app.ankermonitor.shared.normalizeServerUrl
 import app.ankermonitor.shared.problem
 import app.ankermonitor.work.StatusRefreshWorker
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -49,7 +50,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onAppForeground() = container.pushToWidgetOnNextSuccess()
 
-    suspend fun testAndSave(urlInput: String, tokenInput: String): SaveResult {
+    // 初回は保存した瞬間に設定画面が消えて呼び出し元のスコープが止まるので、続きの保存は viewModelScope で最後までやる
+    suspend fun testAndSave(urlInput: String, tokenInput: String): SaveResult =
+        viewModelScope.async { checkAndSave(urlInput, tokenInput) }.await()
+
+    private suspend fun checkAndSave(urlInput: String, tokenInput: String): SaveResult {
         val url = normalizeServerUrl(urlInput)
         if (url.isEmpty()) return SaveResult.Rejected("接続先を入れてください")
         val candidate = Connection(url, tokenInput.trim())
