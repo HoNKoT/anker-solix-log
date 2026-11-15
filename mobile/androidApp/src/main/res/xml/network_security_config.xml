@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 接続先は利用者が入れる任意のホスト (Tailscale の 100.x.y.z や MagicDNS 名) なので、
+     domain-config ではなく base-config で平文 HTTP を許可する。
+     (macOS 版では ATS が 100.x への http を拒否して何も表示されない不具合が実際に起きた) -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
