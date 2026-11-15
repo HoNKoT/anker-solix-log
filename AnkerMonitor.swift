@@ -50,6 +50,16 @@ struct PortInfo: Decodable {
     let key: String
     let dir: String
     let w: Int
+    var shared: Bool? = nil
+}
+
+/// 機器どうしの給電 (バックエンドの find_sharing)。このぶんは power_in / power_out から引かれている
+struct ShareInfo: Decodable, Equatable {
+    let key: String
+    let dir: String  // in = 相手から給電されている / out = 相手へ給電している
+    let w: Int
+    let peer: String
+    var peer_name: String? = nil
 }
 
 struct Device: Decodable {
@@ -64,10 +74,76 @@ struct Device: Decodable {
     let icon: String?
     let model_label: String?
     let ports: [PortInfo]?
+    var shared: [ShareInfo]? = nil
 }
 
 struct Status: Decodable {
     let devices: [Device]
+}
+
+// MARK: - 充電の出来事 (通知のもと)
+
+enum ChargeEvent: Equatable {
+    case transferDone(device: String, peer: String, battery: Int)  // 別の機器からの給電が終わった (受け取った側で 1 回)
+    case solarFull(device: String)
+    case chargeFull(device: String, via: String?)  // via: 給電してくれた機器の名前 (機器どうしの給電で満充電になったとき)
+}
+
+/// /status を読むたびに渡して、前回との差から「給電が終わった」「満充電になった」を取り出す。
+/// 満充電の瞬間は入力が 0W になっていることが多いので、何で充電していたかは直前まで覚えておく。
+struct ChargeEventTracker {
+    static let full = 100
+    static let fullRearm = 95  // 99 ↔ 100 を行き来しても何度も通知しない。ここまで下がったら、また通知できる
+
+    private var lastBattery: [String: Int] = [:]
+    private var lastSource: [String: String] = [:]  // solar / charge / transfer
+    private var lastFeeders: [String: [String: String]] = [:]  // 機器 → (給電してくれている機器ID → 名前)
+    private var fullNotified = Set<String>()
+
+    mutating func update(_ devices: [Device]) -> [ChargeEvent] {
+        var events: [ChargeEvent] = []
+        for d in devices {
+            guard d.state == "connected", let b = d.battery else { continue }
+            let name = d.name ?? d.id
+            let feeders = Dictionary((d.shared ?? []).filter { $0.dir == "in" && $0.w > 0 }.map { ($0.peer, $0.peer_name ?? $0.peer) },
+                                     uniquingKeysWith: { a, _ in a })
+            var solar = 0, other = 0
+            for p in d.ports ?? [] where p.dir == "in" && p.w > 0 && !(p.shared ?? false) {
+                if p.key == "solar" { solar += p.w } else { other += p.w }
+            }
+            if solar + other == 0 { other = d.power_in ?? 0 }
+            if !feeders.isEmpty {
+                lastSource[d.id] = "transfer"
+            } else if solar >= 1 && solar >= other {
+                lastSource[d.id] = "solar"
+            } else if other >= 1 {
+                lastSource[d.id] = "charge"
+            }
+
+            // 満充電: 前回 100% 未満 → 今回 100%。何で充電していたかで分ける
+            if let prev = lastBattery[d.id], prev < Self.full, b >= Self.full, !fullNotified.contains(d.id) {
+                fullNotified.insert(d.id)
+                switch lastSource[d.id] {
+                case "solar": events.append(.solarFull(device: name))
+                case "transfer":
+                    let via = (feeders.isEmpty ? lastFeeders[d.id] : feeders)?.values.sorted().first
+                    events.append(.chargeFull(device: name, via: via))
+                default: events.append(.chargeFull(device: name, via: nil))
+                }
+            }
+            if b <= Self.fullRearm { fullNotified.remove(d.id) }
+
+            // 給電の終わり: 前回いた相手が、今回いない
+            if let prev = lastFeeders[d.id] {
+                for (peer, peerName) in prev.sorted(by: { $0.key < $1.key }) where feeders[peer] == nil {
+                    events.append(.transferDone(device: name, peer: peerName, battery: b))
+                }
+            }
+            lastFeeders[d.id] = feeders
+            lastBattery[d.id] = b
+        }
+        return events
+    }
 }
 
 struct LaunchConfig: Decodable {
@@ -520,6 +596,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     private var configProblem: String?
     private var timer: Timer?
     private var lowNotified = Set<String>()  // 残量低下を通知済みの機器
+    private var chargeEvents = ChargeEventTracker()
+    private var transferFullNotified = Set<String>()  // 給電で満充電を通知した機器 (直後の「給電が終わった」は重ねない)
 
     // MARK: 起動
 
@@ -692,6 +770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
                             usbOut: ok && (d.ports ?? []).contains { $0.dir == "out" && $0.w > 0 && $0.key.hasPrefix("usb") })
         }
         checkLowBattery(status.devices)
+        deliver(chargeEvents.update(status.devices))
         let tooltip = status.devices.map { d -> String in
             let name = d.name ?? d.id
             switch d.state ?? "" {
@@ -787,6 +866,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         try? p.run()
     }
 
+    // MARK: 充電の出来事の通知 (種類ごとにメニューでオン / オフ。どれも最初はオフ)
+
+    private static let eventToggles: [(key: String, title: String)] = [
+        ("notifyTransferDone", "機器どうしの給電が終わったとき"),
+        ("notifySolarFull", "ソーラーで満充電になったとき"),
+        ("notifyChargeFull", "ソーラー以外の充電で満充電になったとき"),
+    ]
+
+    private func enabled(_ key: String) -> Bool { UserDefaults.standard.bool(forKey: key) }
+
+    private func deliver(_ events: [ChargeEvent]) {
+        for e in events {
+            switch e {
+            case let .transferDone(device, peer, battery):
+                if transferFullNotified.remove(device) != nil { continue }
+                guard enabled("notifyTransferDone") else { continue }
+                notify(title: "\(peer) から \(device) への給電が終わりました", body: "\(device) の残量は \(battery)% です。")
+            case let .solarFull(device):
+                guard enabled("notifySolarFull") else { continue }
+                notify(title: "\(device) がソーラーで満充電になりました", body: "残量 100% です。")
+            case let .chargeFull(device, via):
+                guard enabled("notifyChargeFull") else { continue }
+                if let via {
+                    transferFullNotified.insert(device)
+                    notify(title: "\(device) が満充電になりました", body: "\(via) からの給電で残量 100% になりました。")
+                } else {
+                    notify(title: "\(device) が満充電になりました", body: "残量 100% です。")
+                }
+            }
+        }
+    }
+
+    @objc private func toggleEventNotification(_ item: NSMenuItem) {
+        guard let key = item.representedObject as? String else { return }
+        let on = !enabled(key)
+        UserDefaults.standard.set(on, forKey: key)
+        item.state = on ? .on : .off
+    }
+
     @objc private func testNotification() {
         notify(title: "Anker Monitor の通知テスト", body: "残量が 10% 未満になると、こうして通知します。")
     }
@@ -869,7 +987,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         if !isRemote { add("機器を追加…", #selector(openDevices)) }  // リモートからは機器の操作はできない (403)
         add("ブラウザで開く", #selector(openBrowser))
         m.addItem(.separator())
-        add("通知をテスト", #selector(testNotification))
+        let ns = NSMenu()
+        for t in Self.eventToggles {
+            let it = NSMenuItem(title: t.title, action: #selector(toggleEventNotification(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = t.key
+            it.state = enabled(t.key) ? .on : .off
+            ns.addItem(it)
+        }
+        ns.addItem(.separator())
+        let low = NSMenuItem(title: "残量が 10% 未満のとき (常にオン)", action: nil, keyEquivalent: "")
+        low.isEnabled = false
+        ns.addItem(low)
+        let test = NSMenuItem(title: "通知をテスト", action: #selector(testNotification), keyEquivalent: "")
+        test.target = self
+        ns.addItem(test)
+        let ni = NSMenuItem(title: "通知", action: nil, keyEquivalent: "")
+        ni.submenu = ns
+        m.addItem(ni)
         if isRemote {
             let info = NSMenuItem(title: "リモート表示: \(baseURL.host ?? "")", action: nil, keyEquivalent: "")
             info.isEnabled = false
