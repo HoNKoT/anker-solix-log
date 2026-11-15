@@ -14,7 +14,7 @@ body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSyst
 button{font:inherit;color:inherit;cursor:pointer}
 .top{display:flex;gap:8px;align-items:center;margin-bottom:12px}
 nav{flex:1;display:flex;gap:4px;background:var(--line);border-radius:9px;padding:3px}
-nav a{flex:1;text-align:center;text-decoration:none;border-radius:7px;padding:5px 0;color:var(--sub);font-weight:600}
+nav a{flex:1;text-align:center;text-decoration:none;border-radius:7px;padding:4px 0;color:var(--sub);font-weight:600;font-size:calc(11px*var(--fs,1))}
 nav a.on{background:var(--card);color:var(--fg);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .card{background:var(--card);border-radius:14px;margin-bottom:12px;position:relative;overflow:hidden}
 .pad{padding:14px}
@@ -33,16 +33,43 @@ select,input{font:inherit;color:var(--fg);background:var(--soft);border:1px soli
 /* 機器カード: 残量を背景の透過で見せる */
 .dev .fill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(to top,color-mix(in srgb,var(--fc,var(--pct)) 22%,transparent),color-mix(in srgb,var(--fc,var(--pct)) 10%,transparent));
   transition:height .8s ease,background .4s}
-.dev .body{position:relative;padding:14px}
-.flow{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px}
-.flow .ic svg{width:104px;height:auto;display:block}
+.dev .body{position:relative;padding:12px 14px 10px}
+.top2{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.tleft{min-width:0;flex:1}
+.tleft .nm2{display:flex;align-items:center;gap:6px}
+.src{display:inline-flex;color:var(--sub)}.src svg{width:calc(14px*var(--fs,1));height:calc(14px*var(--fs,1))}
+.tleft .evt{margin-top:2px}
+.evt .evi{display:inline-flex;color:var(--sub)}.evt .evi svg{width:calc(12px*var(--fs,1));height:calc(12px*var(--fs,1))}
+.pctbox{flex:none;display:flex;align-items:flex-end;gap:5px}
+.pctbox .pct{font-size:calc(32px*var(--fs,1));letter-spacing:-.5px}.pctbox .pct small{font-size:calc(14px*var(--fs,1))}
+.rem{font-size:calc(9.5px*var(--fs,1));color:var(--sub);opacity:.75;margin-bottom:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.flow{display:flex;justify-content:center;align-items:center;gap:calc(8px*var(--fs,1));margin-top:8px;padding-bottom:calc(6px*var(--fs,1))}
+.flow .ic{flex:0 1 calc(76px*var(--fs,1));min-width:0;display:flex;justify-content:center}
+.flow .ic svg{width:100%;height:calc(76px*var(--fs,1));display:block}
+.fcol{position:relative;flex:0 1 calc(56px*var(--fs,1));min-width:0;height:calc(76px*var(--fs,1));display:flex;align-items:center;justify-content:center}
+.fcol.hide>*{visibility:hidden}
+.fcol .fside{position:absolute;left:50%;top:calc(50% + 12px*var(--fs,1));transform:translateX(-50%);margin-top:calc(8px*var(--fs,1))}
+.kind{flex:none;width:calc(22px*var(--fs,1));height:calc(76px*var(--fs,1));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.kind svg{width:calc(20px*var(--fs,1));height:calc(20px*var(--fs,1));flex:none}
+.kind.l svg{color:var(--in)}.kind.r svg{color:var(--out)}
+.farrow{display:flex;justify-content:center;color:var(--sub);opacity:.25}
+.farrow svg{max-width:100%;width:calc(34px*var(--fs,1));height:auto;display:block;fill:none;stroke:currentColor;stroke-width:5.5;stroke-linecap:round;stroke-linejoin:round}
+.farrow.on.in{color:var(--in);opacity:1}.farrow.on.out{color:var(--out);opacity:1}
+.farrow.on path{animation:flow 1.2s ease-in-out infinite}
+.farrow.on path:nth-child(2){animation-delay:.2s}.farrow.on path:nth-child(3){animation-delay:.4s}
+@keyframes flow{0%,100%{opacity:.22}40%{opacity:1}}
+.fside{display:flex;align-items:center;justify-content:center;gap:2px;font-variant-numeric:tabular-nums;font-size:calc(13px*var(--fs,1));font-weight:700;white-space:nowrap;transition:opacity .3s}
+.fside b{font-weight:800}.fside small{font-size:.7em;color:inherit;font-weight:700;margin-left:1px}
+.fside svg{width:calc(13px*var(--fs,1));height:calc(13px*var(--fs,1));flex:none}
+.fside.l{color:var(--in)}.fside.r{color:var(--out)}
+.fside.zero{opacity:.28}
+@media(prefers-reduced-motion:reduce){.farrow.on path{animation:none}}
 .fside{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;font-size:calc(17px*var(--fs,1));font-weight:700;white-space:nowrap;transition:opacity .3s}
 .fside.l{justify-content:flex-end}.fside.r{justify-content:flex-start}
-.fside b{font-weight:800}.fside small{font-size:.62em;color:var(--sub);font-weight:700;margin-left:1px}
 .fside svg{width:calc(20px*var(--fs,1));height:calc(20px*var(--fs,1));flex:none}
 .fside.l svg{color:var(--in)}.fside.l b{color:var(--in)}.fside.r svg,.fside.r b{color:var(--out)}
 .fside.zero{opacity:.28}.fside .arr{color:var(--sub);font-weight:400;font-size:.8em}
-.titles{min-width:0;text-align:center;margin-top:6px}
+.titles{min-width:0;text-align:center}
 .titles .nm2{display:flex;justify-content:center;align-items:center;gap:6px}
 .model{font-size:calc(10px*var(--fs,1))}
 .share{display:flex;align-items:center;gap:6px;justify-content:center;margin-top:8px;font-size:calc(11px*var(--fs,1));color:var(--sub)}
@@ -77,7 +104,7 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .dbig .yen b{color:var(--in)}
 .price{display:flex;align-items:center;gap:6px;font-size:calc(12px*var(--fs,1));color:var(--sub);margin-top:10px}
 .price input{width:70px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;padding:3px 6px;font:inherit;text-align:right}
-.main{display:flex;align-items:center;justify-content:center;gap:10px;margin:14px 0 4px}
+.main{display:none}
 .mleft{display:flex;align-items:baseline;justify-content:center;gap:4px 10px;flex-wrap:wrap;min-width:0}
 .mright{margin-left:auto;display:flex;flex-direction:column;gap:3px;align-items:flex-end;font-variant-numeric:tabular-nums}
 .tot{display:flex;align-items:center;gap:5px;font-size:calc(16px*var(--fs,1));font-weight:700;white-space:nowrap}
@@ -88,14 +115,15 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .info+.chip{margin-left:0}
 .infotip{font-size:calc(11px*var(--fs,1));line-height:1.5;color:var(--sub);background:var(--line);border-radius:8px;padding:8px 10px;margin-top:8px}
 .remote [data-tab=devices],.remote .price,.remote #h-store,.remote .evt a.cp,.remote #h-note{display:none!important}
-.evt{font-size:calc(10px*var(--fs,1));color:var(--sub);margin-top:8px;display:flex;gap:8px;align-items:center}
+.evt{font-size:calc(10px*var(--fs,1));color:var(--sub);margin-top:6px;display:flex;gap:8px;align-items:center}
 .evt a.cp{color:var(--sub);cursor:pointer;font-size:calc(13px*var(--fs,1));text-decoration:none;padding:0 2px}
 .evt a.cp:hover{color:var(--fg)}
 .sw{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .sw span{font-size:calc(11px*var(--fs,1));padding:2px 9px;border-radius:10px;background:var(--line);color:var(--sub);white-space:nowrap}
 .sw span.on{background:color-mix(in srgb,var(--out) 20%,transparent);color:var(--out)}
-details.gfold{margin-top:8px}
-details.gfold>summary{cursor:pointer;color:var(--sub);font-size:calc(12px*var(--fs,1));list-style:none;user-select:none;padding:2px 0}
+details.gfold{margin-top:5px}
+.dev .outs{margin-top:6px}
+details.gfold>summary{cursor:pointer;color:var(--sub);font-size:calc(12px*var(--fs,1));list-style:none;user-select:none;padding:0}
 details.gfold>summary::-webkit-details-marker{display:none}
 .pct{font-size:calc(50px*var(--fs,1));font-weight:800;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-1px}
 .pct small{font-size:calc(20px*var(--fs,1));color:var(--sub);font-weight:700;margin-left:1px}
@@ -104,7 +132,7 @@ details.gfold>summary::-webkit-details-marker{display:none}
 .io .cell b{display:block;font-size:calc(22px*var(--fs,1));font-variant-numeric:tabular-nums;font-weight:700}
 .io .cell span{font-size:calc(11px*var(--fs,1));color:var(--sub)}
 .io .in b{color:var(--in)}.io .out b{color:var(--out)}
-.prow{display:grid;grid-template-columns:10px 100px 1fr 54px;gap:6px;align-items:center;margin-top:4px;font-size:calc(11px*var(--fs,1))}
+.prow{display:grid;grid-template-columns:10px 1fr auto;gap:6px;align-items:center;margin-top:4px;font-size:calc(11px*var(--fs,1))}
 .prow i.dot{width:8px;height:8px;border-radius:2px;display:block}
 .prow .pl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .prow .pb{height:5px;border-radius:3px;background:color-mix(in srgb,var(--fg) 8%,transparent);overflow:hidden}
@@ -141,12 +169,15 @@ tr+tr td{border-top:1px solid var(--line)}
 .empty{padding:26px 14px;text-align:center;color:var(--sub)}
 .foot{color:var(--sub);font-size:calc(11px*var(--fs,1));text-align:center;margin-top:6px}
 .dim{opacity:.55}
-.zoom-ctl{display:inline-flex;align-items:center;gap:2px;white-space:nowrap}
+.zoom-ctl{display:inline-flex;align-items:center;gap:2px;white-space:nowrap;font-size:calc(11px*var(--fs,1))}
+.zoom-ctl button{padding:3px 6px!important}
+#fs-pct{min-width:calc(34px*var(--fs,1));text-align:center;color:var(--sub);cursor:pointer}
 .zoom-ctl button,.step button{border:1px solid var(--line);background:var(--card);color:var(--sub);border-radius:6px;padding:2px 7px;font-weight:700;font-size:calc(11px*var(--fs,1))}
 .zoom-ctl button:hover,.step button:hover{color:var(--fg)}
 .zoom-ctl button:disabled,.step button:disabled{opacity:.35;cursor:default}
 #fs-pct{min-width:38px;text-align:center;color:var(--sub);font-size:calc(11px*var(--fs,1));cursor:pointer}
 .step{display:inline-flex;align-items:center;gap:4px}
+.gstep{display:flex;justify-content:center;margin-top:6px}
 .step span{min-width:84px;text-align:center;font-size:calc(11px*var(--fs,1));color:var(--sub)}
 a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;white-space:nowrap}
 .store{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
@@ -167,7 +198,6 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
 
 <section class="tab" id="tab-now" hidden>
   <div class="bar">
-    <span class="step" id="now-range"></span>
     <div class="seg" id="now-mode"></div>
   </div>
   <div id="cards"></div>
@@ -255,9 +285,14 @@ const pcol=k=>PCOL[k]||'#888';
 const INICON={
   solar:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><title>ソーラー</title><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
   other:'<svg viewBox="0 0 24 24" fill="currentColor"><title>電気 (AC / USB 給電)</title><path d="M13 2L5 13.5h5.5L9.5 22 19 9.5h-5.8z"/></svg>'};
+const SRCICON={ble:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>Bluetooth</title><path d="M7 7l10 10-5 5V2l5 5L7 17"/></svg>',
+  cloud:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>クラウド</title><path d="M7 18a4.5 4.5 0 1 1 .9-8.9A6 6 0 0 1 19.5 11 3.5 3.5 0 0 1 18 18z"/></svg>'};
+const PULSE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-8 5 16 3-8h5"/></svg>';
 INICON.usb='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><title>USB</title><path d="M12 3v14M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 11l4-3v-2M12 14l-4-3V9"/><rect x="14.5" y="3.5" width="3" height="3" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg>';
 INICON.plug='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>AC / DC 出力</title><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></svg>';
 INICON.share='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>電力共有</title><path d="M4 8h14l-3-3M20 16H6l3 3"/></svg>';
+function fmtDHM(h){if(h==null||!(h>0))return '';const m=Math.round(h*60),dd=Math.floor(m/1440),hh=Math.floor(m%1440/60),mm=m%60;
+  return (dd?dd+'d ':'')+(dd||hh?String(hh).padStart(dd?2:1,'0')+'h ':'')+String(mm).padStart(dd||hh?2:1,'0')+'m'}
 function fmtRemain(h,chg){if(h==null)return '';const m=Math.round(h*60);const s=m>=60?Math.floor(m/60)+'時間'+(m%60?m%60+'分':''):m+'分';return (chg==='CHARGING'?'満充電まで ':'あと ')+s}
 function fmtT(t,span){const d=new Date(t*1000);const hm=pad2(d.getHours())+':'+pad2(d.getMinutes());return span>30*3600?`${d.getMonth()+1}/${d.getDate()} ${hm}`:hm}
 function niceMax(v){if(v<=0)return 50;const e=Math.pow(10,Math.floor(Math.log10(v)));for(const m of [1,2,5,10]){if(v<=m*e)return m*e}return 10*e}
@@ -288,36 +323,47 @@ function iconSVG(kind,pct,state,usb){ // state: 'charging' | 'low' | ''
     `<rect x="${bx}" y="${fy}" width="${bw}" height="${by+bh-fy}" fill="${fillc}" opacity="${pct==null?0:.95}"/></g>`+
     `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${r}" fill="none" stroke="${line}" stroke-width="1.4" opacity="${pct==null?.4:.85}"/>${handle}${state==='charging'&&pct!=null?bolt:''}${usb?usbBadge(bx+bw-9.5,by+bh-3.4):''}</svg>`;
 }
-/* カード用の大きなアイコン: 機種の形 (取っ手・前面のポート・ディスプレイ) に寄せて描く。残量は本体の塗りで見せる */
+/* カード用の大きなアイコン: 実機を正面から見た形に寄せて描く。残量は本体の塗りで見せる。
+   C300 DC / C300: 縦長。上からライトバー・シガーソケット・ディスプレイ・USB-C 4 / USB-A 2。
+   C2000 Gen 2 ほか: 横長。上段にディスプレイと電源ボタン、下段に シガー・USB・AC コンセント・TT-30。両脇上に持ち手。 */
 function bigIconSVG(kind,pct,state,usb){
   const id='b'+(++iconN),lv=pct==null?0:Math.max(0,Math.min(100,pct));
   const fillc=state==='charging'?'var(--in)':state==='out'?'var(--out)':state==='low'?'var(--low)':'currentColor';
   const line=state==='low'?'var(--low)':'currentColor';
-  const G={c300dc:{x:5,y:11,w:38,h:22,r:3.5},c2000g2:{x:2.5,y:8,w:43,h:25,r:4.5},compact:{x:5,y:11,w:38,h:22,r:3.5},box:{x:3,y:10,w:42,h:23,r:4},large:{x:2.5,y:8,w:43,h:25,r:4.5}}[kind]||{x:4,y:10,w:40,h:23,r:4};
-  const {x,y,w,h,r}=G,fy=y+h*(1-lv/100),lc=`fill="none" stroke="${line}" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" opacity=".8"`;
-  const dot=(cx,cy,rr)=>`<circle cx="${cx}" cy="${cy}" r="${rr}" fill="none" stroke="${line}" stroke-width="1" opacity=".75"/>`;
+  const tall=kind==='c300dc'||kind==='compact';
+  const G=tall?{vb:'0 0 40 48',x:7,y:3,w:26,h:42,r:4}:{vb:'0 0 58 40',x:5,y:6,w:48,h:28,r:4.5};
+  const {x,y,w,h,r}=G,fy=y+h*(1-lv/100);
+  const lc=`fill="none" stroke="${line}" stroke-width=".9" stroke-linecap="round" stroke-linejoin="round" opacity=".85"`;
+  const sd=`fill="${line}" opacity=".55"`;
+  const R=(a,b,c,d,rx)=>`<rect x="${a}" y="${b}" width="${c}" height="${d}" rx="${rx}" ${lc}/>`;
+  const C=(cx,cy,rr)=>`<circle cx="${cx}" cy="${cy}" r="${rr}" ${lc}/>`;
   let det='';
-  if(kind==='c300dc'||kind==='compact'){ // 小型: 上に持ち手、前面に USB ポートとシガー口
-    det=`<path d="M14 ${y} V5.5 a2 2 0 0 1 2-2 H32 a2 2 0 0 1 2 2 V${y}" ${lc}/>`+
-      `<rect x="${x+4}" y="${y+4}" width="9" height="4" rx="1" ${lc}/>`+
-      `<rect x="${x+17}" y="${y+14.5}" width="4.2" height="2.6" rx="1" ${lc}/><rect x="${x+23}" y="${y+14.5}" width="4.2" height="2.6" rx="1" ${lc}/>`+dot(x+w-6,y+15.8,2.6)+
-      `<path d="M${x+4} ${y+h-4} h6" ${lc}/>`;
-  }else if(kind==='c2000g2'||kind==='large'){ // 大型: 上面の凹んだ持ち手、前面ディスプレイ、ポート列、脚
-    det=`<rect x="14" y="${y-4.2}" width="20" height="6.4" rx="2.2" ${lc}/>`+
-      `<rect x="${x+5}" y="${y+4}" width="14" height="6" rx="1.4" ${lc}/>`+
-      `<rect x="${x+5}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/><rect x="${x+11}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/><rect x="${x+17}" y="${y+15}" width="3.8" height="2.4" rx=".9" ${lc}/>`+dot(x+w-8,y+10,2.8)+dot(x+w-8,y+17,2.8)+
-      `<path d="M${x+5} ${y+h} v2.2 M${x+w-5} ${y+h} v2.2" ${lc} stroke-width="1.8"/>`;
-  }else{ // 中型
-    det=`<path d="M15 ${y} V6.5 a2 2 0 0 1 2-2 H31 a2 2 0 0 1 2 2 V${y}" ${lc}/>`+
-      `<rect x="${x+5}" y="${y+4}" width="11" height="5" rx="1.2" ${lc}/>`+dot(x+w-8,y+8,2.6)+dot(x+w-8,y+16,2.6)+`<path d="M${x+5} ${y+16} h14" ${lc}/>`;
+  if(tall){
+    det+=`<rect x="${x+3}" y="${y+3}" width="${w-6}" height="2.4" rx="1.2" ${sd}/>`;            // ライトバー
+    det+=C(x+w/2,y+12.5,3.6)+C(x+w/2,y+12.5,1.3);                                               // シガーソケット
+    det+=R(x+3,y+19,w-6,9,1.6)+`<path d="M${x+5.5} ${y+25.5}h3.5M${x+11} ${y+23.5}h7" ${lc}/>`;   // ディスプレイ
+    for(let i=0;i<4;i++)det+=R(x+3+i*5.1,y+31,4.2,2.2,1.1);                                     // USB-C ×4
+    det+=R(x+3,y+36,6,2.6,.6)+R(x+10.5,y+36,6,2.6,.6)+C(x+w-5,y+37.3,1.6);                      // USB-A ×2 と電源ボタン
+  }else{
+    det+=R(x-3.4,y+3,3.4,9,1.4)+R(x+w,y+3,3.4,9,1.4);                                           // 左右の持ち手
+    det+=R(x+4,y+3.5,17,8,1.6)+`<path d="M${x+6.5} ${y+9}h4M${x+12} ${y+6.5}h6" ${lc}/>`;        // ディスプレイ
+    det+=`<rect x="${x+29}" y="${y+5.4}" width="8" height="2" rx="1" ${sd}/>`+C(x+w-6,y+7.5,2.2); // ロゴと電源ボタン
+    det+=C(x+5.5,y+16.5,2.6)+C(x+11.5,y+16.5,1.1);                                              // シガーソケットと DC ボタン
+    for(let i=0;i<3;i++)det+=R(x+15.5+i*5,y+15.4,3.8,2.2,1.1);                                  // USB-C ×3
+    det+=R(x+31,y+15.2,4.6,2.5,.6);                                                              // USB-A
+    for(let i=0;i<5;i++)det+=C(x+5.5+i*6,y+22.3,2.3);                                           // AC ×5
+    det+=C(x+w-7,y+20.2,4)+`<path d="M${x+w-7.8} ${y+19.2}v2M${x+w-6.2} ${y+19.2}v2" ${lc}/>`;   // TT-30
+    det+=`<path d="M${x+5} ${y+h}v2.4M${x+w-5} ${y+h}v2.4" ${lc} stroke-width="2"/>`;           // 脚
   }
-  const bp=(()=>{const cx=x+w/2,cy=y+h/2,bh=13,bw=bh*.62;return [[.68,0],[0,.58],[.46,.58],[.30,1],[1,.38],[.54,.38]].map(([u,v])=>(cx-bw/2+u*bw).toFixed(2)+','+(cy-bh/2+v*bh).toFixed(2)).join(' ')})();
+  const bp=(()=>{const cx=x+w/2,cy=y+h/2,bh=tall?15:13,bw=bh*.62;return [[.68,0],[0,.58],[.46,.58],[.30,1],[1,.38],[.54,.38]].map(([u,v])=>(cx-bw/2+u*bw).toFixed(2)+','+(cy-bh/2+v*bh).toFixed(2)).join(' ')})();
   const bolt=`<polygon points="${bp}" fill="#fff" stroke="#000" stroke-opacity=".55" stroke-width=".8" stroke-linejoin="round"/>`;
-  return `<svg viewBox="0 0 48 40"><defs><clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/></clipPath></defs>`+
+  return `<svg viewBox="${G.vb}"><defs><clipPath id="${id}"><rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}"/></clipPath></defs>`+
     `<g clip-path="url(#${id})"><rect x="${x}" y="${y}" width="${w}" height="${h}" fill="currentColor" opacity=".16"/>`+
     `<rect x="${x}" y="${fy}" width="${w}" height="${y+h-fy}" fill="${fillc}" opacity="${pct==null?0:.9}"/></g>`+
-    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="none" stroke="${line}" stroke-width="1.6" opacity="${pct==null?.4:.9}"/>${det}${state==='charging'&&pct!=null?bolt:''}${usb?usbBadge(x+w-10,y+h-3.6):''}</svg>`;
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${r}" fill="none" stroke="${line}" stroke-width="1.5" opacity="${pct==null?.4:.9}"/>${det}${state==='charging'&&pct!=null?bolt:''}${usb?(tall?usbBadge(x+w-10,y+h-3.6):usbBadge(x+w-11,y+h+4.6)):''}</svg>`;
 }
+/* 太い矢印: 左から右へ流れる。W が 0 のときは薄く止める */
+const ARROW='<svg viewBox="0 0 44 30"><path d="M5 4l11 11L5 26"/><path d="M17 4l11 11-11 11"/><path d="M29 4l11 11-11 11"/></svg>';
 const hasUsbOut=d=>(d.ports||[]).some(p=>p.dir==='out'&&p.w>0&&p.key.startsWith('usb'));
 const devState=d=>{const i=d.power_in||0,o=d.power_out||0;
   if(i>=1&&i>o)return 'charging';           // 入力 > 出力: 緑
@@ -413,17 +459,15 @@ const nearest=(steps,v)=>{let i=0;for(let k=0;k<steps.length;k++)if(Math.abs(ste
 /* ───────── いま ───────── */
 function portRows(box,list,emptyText){
   box.replaceChildren();
-  const sum=list.reduce((a,p)=>a+p.w,0)||1;
   for(const p of list){const r=el('div','prow');const dot=el('i','dot');dot.style.background=pcol(p.key);
-    const pb=el('div','pb');const bi=el('i');bi.style.width=Math.max(3,p.w/sum*100)+'%';bi.style.background=pcol(p.key);pb.append(bi);
-    r.append(dot,el('span','pl',p.label),pb,el('span','pw',p.w+' W'));box.append(r)}
+    r.append(dot,el('span','pl',p.label),el('span','pw',p.w+' W'));box.append(r)}
   if(!list.length)box.append(el('div','zero',emptyText||'なし (0 W)'));
 }
 const REDUCE=matchMedia('(prefers-reduced-motion: reduce)');
 function setFold(det,open,save){
   if(det.classList.contains('is-open')===open)return;
   const gb=det.querySelector('.gbody');
-  if(save)lsSet('amon-graph',open?'1':'0');
+  if(save)lsSet(save,open?'1':'0');
   if(REDUCE.matches){det.open=open;det.classList.toggle('is-open',open);if(open)refreshNow();return}
   clearTimeout(det._ft);
   if(open){det.open=true;det.classList.add('is-open');gb.style.height='0px';gb.offsetHeight;
@@ -453,7 +497,7 @@ function cardHover(c){
   cv.addEventListener('touchmove',move,{passive:true});cv.addEventListener('touchend',leave);
 }
 function tickEvt(c){if(!c.evtAt||!c.evtT)return;const s=Math.max(0,Math.round(Date.now()/1000-c.evtAt));
-  c.evtT.textContent='最後のイベント '+new Date(c.evtAt*1000).toLocaleTimeString('ja-JP')+(s>=60?' ('+Math.floor(s/60)+'分前)':'')}
+  c.evtT.textContent=new Date(c.evtAt*1000).toLocaleTimeString('ja-JP')+(s>=60?' ('+Math.floor(s/60)+'分前)':'')}
 setInterval(()=>{for(const c of Object.values(S.cards))tickEvt(c)},1000);
 async function copyRecent(c,a){
   try{const all=await api('/api/cloud/recent?n=30');const key=Object.keys(all).find(k=>c.devSn?c.devSn.startsWith(k):false)||(Object.keys(all).length===1?Object.keys(all)[0]:null);
@@ -464,38 +508,45 @@ async function copyRecent(c,a){
 function ensureCard(d){
   let c=S.cards[d.id];if(c)return c;
   const root=el('div','card dev');const fill=el('div','fill');const body=el('div','body');root.append(fill,body);
-  // 左: 入力 (USB/ソーラー) → 真ん中: 機種アイコン → 右: 出力 (USB など)
-  const head=el('div','flow');const ic=el('span','ic');const tin=el('div','fside l'),tout=el('div','fside r');head.append(tin,ic,tout);
-  const tt=el('div','titles');const nmr=el('div','nm2');const nm=el('div','name');const chip=el('span','chip');
+  // 上段: [接続方法アイコン] 機種名 [ⓘ] / 最新の取得時間 ……………… 電池残量 %
+  // 中段: 入力の種類 ▸▸▸ 本体アイコン ▸▸▸ 出力の種類 (種類アイコンが無くても、矢印と本体の位置は動かさない。W は矢印の真下)
+  const src=el('span','src');const nm=el('div','name');const chip=el('span','chip');
   const info=el('button','info','ⓘ');info.style.display='none';info.setAttribute('aria-label','待機電力について');
   const infoTip=el('div','infotip');infoTip.hidden=true;info.onclick=e=>{e.stopPropagation();infoTip.hidden=!infoTip.hidden};
-  nmr.append(nm,chip,info);const md=el('div','model');tt.append(nmr,md);
-  const main=el('div','main');const ml=el('div','mleft');const pct=el('div','pct');const sub=el('div','sub');ml.append(pct,sub);main.append(ml);
+  const nmr=el('div','nm2');nmr.append(src,nm,info,chip);const md=el('div','model');md.style.display='none';
+  const evt=el('div','evt');const tl=el('div','tleft');tl.append(nmr,evt);
+  const pbox=el('div','pctbox');const pct=el('div','pct');const sub=el('div','rem');pbox.append(sub,pct);
+  const top2=el('div','top2');top2.append(tl,pbox);
+  const ic=el('span','ic');const tin=el('div','fside l'),tout=el('div','fside r');const ain=el('span','farrow in'),aout=el('span','farrow out');ain.innerHTML=ARROW;aout.innerHTML=ARROW;
+  const kin=el('div','kind l'),kout=el('div','kind r');
+  // 列ごとに「矢印 + 真下のW」を1つの箱にして、箱の中で左右中央に揃える。0W のときは visibility で隠す (場所は空けたまま)
+  const cin=el('div','fcol'),cout=el('div','fcol');cin.append(ain,tin);cout.append(aout,tout);
+  const head=el('div','flow');head.append(kin,cin,ic,cout,kout);
   const share=el('div','share');share.style.display='none';
-  const outs=el('div','outs');const sw=el('div','sw');const evt=el('div','evt');
+  const outs=el('div','outs');const sw=el('div','sw');
   const detail=el('div','detail');
-  // グラフは見たいときだけ開く (開閉は全カード共通で覚える)
+  // グラフは見たいときだけ開く (開閉は機器ごとに覚える)
   const det=el('details','gfold');const dsum=el('summary','','グラフ');
   const cw=el('div','chartwrap');const cv=el('canvas');cw.append(cv);const lg=el('div','legend');
   const ctip=el('div','tip');ctip.hidden=true;cw.append(ctip);
-  const gb=el('div','gbody');const gin=el('div','gin');gin.append(cw,lg);gb.append(gin);det.append(dsum,gb);
-  const startOpen=lsGet('amon-graph','0')==='1';det.open=startOpen;det.classList.toggle('is-open',startOpen);
-  dsum.addEventListener('click',e=>{e.preventDefault();setFold(det,!det.classList.contains('is-open'),true);
-    for(const o of Object.values(S.cards))if(o.det!==det)setFold(o.det,det.classList.contains('is-open'),false)});
-  body.append(head,tt,infoTip,main,share,outs,sw,evt,detail,det);
+  const stp=el('div','step gstep');const gb=el('div','gbody');const gin=el('div','gin');gin.append(cw,lg,stp);gb.append(gin);det.append(dsum,gb);
+  const gkey='amon-graph-'+d.id;const startOpen=lsGet(gkey,'0')==='1';det.open=startOpen;det.classList.toggle('is-open',startOpen);
+  dsum.addEventListener('click',e=>{e.preventDefault();setFold(det,!det.classList.contains('is-open'),gkey)});
+  body.append(top2,head,infoTip,share,outs,sw,detail,det);
   $('cards').append(root);
-  c=S.cards[d.id]={root,fill,ic,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
+  c=S.cards[d.id]={root,fill,stp,ic,ain,aout,cin,cout,kin,kout,src,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
   cardHover(c);
   return c;
 }
 function updateCard(c,d){
   const st=devState(d);
   c.ic.innerHTML=bigIconSVG(d.icon,d.battery,st,hasUsbOut(d));
-  c.nm.textContent=d.name;c.md.textContent=d.model_label+(d.via?' · '+VIA[d.via]:'');
+  c.nm.textContent=d.name;
+  {const v=d.via||(d.source==='cloud'?'cloud':'ble');c.src.innerHTML=SRCICON[v]||SRCICON.ble;c.src.title=VIA[v]||'Bluetooth'}
   const [lab,cls]=STATE[d.state]||[d.state,''];c.chip.textContent=d.state==='connected'?'':lab;c.chip.className='chip '+cls;c.chip.style.display=d.state==='connected'?'none':'';
   c.pct.replaceChildren(document.createTextNode(d.battery==null?'--':d.battery),el('small','','%'));
   const idle=(d.power_in||0)<1&&(d.power_out||0)<1;
-  c.sub.textContent=idle?'':[CHG[d.charging]||'',fmtRemain(d.remaining_h,d.charging)].filter(Boolean).join('  ');
+  c.sub.textContent=idle?'':fmtDHM(d.remaining_h);
   c.info.style.display=idle&&d.standby_w!=null?'':'none';
   if(!c.info.style.display){c.infoTip.textContent='待機電力の目安: 入力も出力も 0W のとき、「いまの残量 × 電池容量 ÷ 機器が出している残り時間」で割り出した値です。機器自身の見積もりを使った目安で、実測ではありません (AC出力やディスプレイが動いていると、実際はもっと増えます)。現在の見積もり: 残量 '+d.battery+'% / 残り '+d.remaining_h+' 時間 → 約 '+d.standby_w+' W。'}
   // 右端: 入力と出力の合計 (2行)。入力は、ソーラー / AC / その他をアイコンで見分ける
@@ -503,27 +554,29 @@ function updateCard(c,d){
   const kinds=[...new Set((d.ports||[]).filter(p=>p.dir==='in'&&p.w>0&&!p.shared).map(p=>p.key==='solar'?'solar':'other'))];
   const okinds=[...new Set((d.ports||[]).filter(p=>p.dir==='out'&&p.w>0&&!p.shared).map(p=>p.key.startsWith('usb')?'usb':'plug'))];
   const wv=x=>{const v=Math.round(x||0);return '<b>'+v+'</b><small>W</small>'};
-  c.tin.innerHTML=kinds.map(k=>INICON[k]).join('')+wv(d.power_in)+'<span class="arr">▸</span>';
-  c.tout.innerHTML='<span class="arr">▸</span>'+okinds.map(k=>INICON[k]).join('')+wv(d.power_out);
-  c.tin.classList.toggle('zero',(d.power_in||0)<1);c.tout.classList.toggle('zero',(d.power_out||0)<1);
+  c.kin.innerHTML=kinds.map(k=>INICON[k]).join('');c.kout.innerHTML=okinds.map(k=>INICON[k]).join('');
+  c.tin.innerHTML=wv(d.power_in);c.tout.innerHTML=wv(d.power_out);
+  c.ain.classList.toggle('on',(d.power_in||0)>=1);c.aout.classList.toggle('on',(d.power_out||0)>=1);
+  c.cin.classList.toggle('hide',(d.power_in||0)<1);c.cout.classList.toggle('hide',(d.power_out||0)<1);
   // 電力共有 (機器どうしの USB 給電): 入出力には数えない
   const shr=d.shared||[];c.share.style.display=shr.length?'':'none';
   c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ共有中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から共有中 '+x.w+' W')+' (入出力に数えません)</span>').join('<br>');
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
-  const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.outs.style.display=olist.length?'':'none';
+  const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.hasOuts=olist.length>0;showOuts(c);
   // スイッチの ON/OFF (読み取りのみ)
   c.sw.replaceChildren();
   const SWL={ac_out:'AC出力',dc_out:'DC出力 (シガー)'};
   c.evtAt=d.event_at||null;c.devId=d.id;c.devSn=d.cloud_sn||null;
-  if(!c.evt.firstChild){const t=el('span');const a=el('a','cp','⧉');a.title='直近のデータをコピー';a.onclick=()=>copyRecent(c,a);c.evt.append(a,t);c.evtT=t}
+  if(!c.evt.firstChild){const t=el('span');const a=el('a','cp','⧉');a.title='直近のデータをコピー';a.onclick=()=>copyRecent(c,a);const ev=el('span','evi');ev.innerHTML=PULSE;ev.title='最後のイベント (機器から値が届いた時刻)';c.evt.append(a,ev,t);c.evtT=t}
   c.evt.style.display=d.event_at?'flex':'none';tickEvt(c);
   for(const [k,l] of Object.entries(SWL)){const v=d.switches?d.switches[k]:null;if(!v)continue;c.sw.append(el('span','on',l+' ON'))}
   c.sw.style.display=c.sw.childElementCount?'':'none';
-  c.detail.textContent=d.detail||'';
+  c.detail.textContent=d.detail||'';c.detail.style.display=d.detail?'':'none';
   c.fill.style.height=(d.battery||0)+'%';
   c.fill.style.setProperty('--fc',st==='charging'?'var(--in)':st==='low'?'var(--low)':'var(--pct)');
   c.root.classList.toggle('dim',d.state!=='connected');
 }
+function showOuts(c){c.outs.style.display=(S.nowMode==='ports'&&c.hasOuts)?'':'none'}
 function drawCard(c){
   if(!c.det.open)return;
   c.dsum.textContent='グラフ (直近 '+spanLabel(S.nowHours*3600)+')';
@@ -543,8 +596,8 @@ async function loadCard(id){
 function refreshNow(){for(const id of Object.keys(S.cards))loadCard(id)}
 function renderNowControls(){
   const i=nearest(NOW_STEPS,S.nowHours),go=d=>{S.nowHours=NOW_STEPS[i+d];lsSet('amon-nowh',S.nowHours);renderNowControls();refreshNow()};
-  stepper($('now-range'),'直近 '+spanLabel(NOW_STEPS[i]*3600),i>0,i<NOW_STEPS.length-1,()=>go(-1),()=>go(1));
-  seg($('now-mode'),[['total','合計'],['ports','ポート内訳']],S.nowMode,m=>{S.nowMode=m;renderNowControls();refreshNow()});
+  for(const c of Object.values(S.cards))stepper(c.stp,'直近 '+spanLabel(NOW_STEPS[i]*3600),i>0,i<NOW_STEPS.length-1,()=>go(-1),()=>go(1));
+  seg($('now-mode'),[['total','合計'],['ports','ポート内訳']],S.nowMode,m=>{S.nowMode=m;renderNowControls();for(const c of Object.values(S.cards))showOuts(c);refreshNow()});
 }
 function updateNow(){
   const devs=S.status?S.status.devices:[];const box=$('cards');
@@ -556,7 +609,7 @@ function updateNow(){
   let fresh=false;
   for(const d of devs){const had=!!S.cards[d.id];const c=ensureCard(d);if(!had)fresh=true;updateCard(c,d)}
   devs.forEach(d=>box.append(S.cards[d.id].root)); // 登録順に並べる
-  if(fresh)refreshNow();
+  if(fresh){renderNowControls();refreshNow()}
 }
 
 /* ───────── 履歴 ───────── */
@@ -874,7 +927,7 @@ setFS(parseFloat(lsGet('amon-fs','1'))||1,false);
 if(PAGE==='now'&&['#history','#devices'].includes(location.hash))location.replace('/'+location.hash.slice(1));
 let firstStatus=true;
 async function loadStatus(){
-  try{S.status=await api('/status');$('foot').textContent='更新 '+new Date().toLocaleTimeString('ja-JP');
+  try{S.status=await api('/status');$('foot').textContent='';
     if(firstStatus){firstStatus=false;if(PAGE==='now'&&!S.status.devices.length&&!REMOTE)location.replace('/devices');else setTab(PAGE)}
     if(S.tab==='now')updateNow();if(S.tab==='devices'){renderDevices(false);if(Date.now()-S.cloudAt>5000){S.cloudAt=Date.now();loadCloud()}}}
   catch(e){$('foot').textContent='バックエンドに接続できません'}
