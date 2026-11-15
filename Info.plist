@@ -24,18 +24,8 @@
     <string>近くのAnkerポータブル電源とBluetoothで通信し、バッテリー残量と入出力を表示します。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSAllowsLocalNetworking</key>
+        <key>NSAllowsArbitraryLoads</key>
         <true/>
-        <key>NSExceptionDomains</key>
-        <dict>
-            <key>ts.net</key>
-            <dict>
-                <key>NSIncludesSubdomains</key>
-                <true/>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-            </dict>
-        </dict>
     </dict>
     <key>NSSupportsAutomaticTermination</key>
     <false/>
