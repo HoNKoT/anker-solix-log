@@ -1,7 +1,7 @@
 # Anker Monitor (スマホアプリ)
 
 記録している Mac のバックエンド (`anker_monitor.py`) の `GET /status` を読んで、
-ポータブル電源の残量・入出力・充電状態をスマホで見るアプリ。いまは Android だけ。
+ポータブル電源の残量・入出力・充電状態をスマホで見るアプリ。Android と iOS (画面のみ。ウィジェットは Android だけ)。
 
 - **画面**: 機器ごとの残量 %、入力 W / 出力 W、充電中かどうか、接続状態。表示中は 3 秒おきに読む。
 - **ホーム画面ウィジェット**: 機器ごとの残量 % と充電 / 放電。WorkManager で 15 分おきに更新し、
@@ -17,9 +17,10 @@ mobile/
 │   ├── androidMain   OkHttp エンジン、DataStore への保存
 │   └── iosMain       Darwin エンジン、NSUserDefaults への保存
 ├── sharedUi/     Compose Multiplatform の画面 (設定・メイン)、ViewModel、Preview
-│   └── iosMain       MainViewController() (iOS アプリから呼ぶ入口。iOS アプリの Xcode プロジェクトはまだ無い)
+│   └── iosMain       MainViewController() (iOS アプリから呼ぶ入口)
 ├── androidApp/   Android の入れ物 (MainActivity)、Glance のウィジェット、WorkManager
-└── screenshots/  Preview のスクリーンショット (android/ と ios/)
+├── iosApp/       iOS の入れ物 (SwiftUI + Xcode プロジェクト)。SharedUi framework の MainViewController() を表示する
+└── screenshots/  Preview のスクリーンショット (android/ と ios/)、シミュレータで起動した画面 (ios-app/)
 ```
 
 バージョンは `gradle/libs.versions.toml` にまとめてある (AGP 9.5.1 / Kotlin 2.4.21 / Gradle 9.9.1 / Ktor 3.6.1 /
@@ -110,9 +111,32 @@ amon token new   # トークンを作る (もうあれば `amon token` で表示
   (macOS 版でも ATS が同じ理由で拒否して何も表示されない不具合があった)。
 - トークンは端末内の DataStore に平文で保存する (読み取り専用のトークンなので、暗号化はしていない)。
 
-## iOS を足すとき
+## iOS のビルド
 
-- 画面 (`sharedUi`)、保存 (`UserDefaultsMonitorStorage`)、Darwin エンジンは入っていて、iOS 向けにもコンパイルできる。
-  `sharedUi` は `SharedUi` という static framework を出す。`MainViewController()` を SwiftUI の `UIViewControllerRepresentable` で包めば表示できる。
-- 足りないのは Xcode プロジェクト (iOS アプリの入れ物) と、ウィジェット (WidgetKit。Glance は Android 専用)。
-- iOS も ATS が http を拒否するので、`NSAppTransportSecurity` の `NSAllowsArbitraryLoads` (または例外) が要る。
+`iosApp/iosApp.xcodeproj` を Xcode で開き、スキーム `iosApp` を選んで iPhone シミュレータ (または実機) で Run する。
+コマンドでシミュレータ向けにビルドするなら:
+
+```bash
+cd mobile/iosApp
+xcodebuild -project iosApp.xcodeproj -scheme iosApp -configuration Debug \
+  -destination 'generic/platform=iOS Simulator' -derivedDataPath build/DerivedData build
+open -a Simulator   # シミュレータを起動しておく (Xcode の Window > Devices and Simulators でも可)
+xcrun simctl install booted build/DerivedData/Build/Products/Debug-iphonesimulator/AnkerMonitor.app
+xcrun simctl launch booted app.ankermonitor.ios
+```
+
+- Kotlin 側は Xcode のビルドフェーズ「Compile Kotlin Framework」が `./gradlew :sharedUi:embedAndSignAppleFrameworkForXcode` を呼んで作る
+  (KMP 標準の組み込み方)。出力は `sharedUi/build/xcode-frameworks/<構成>/<SDK>/SharedUi.framework` で、
+  `FRAMEWORK_SEARCH_PATHS` と `-framework SharedUi` でリンクする。static framework なので Embed は不要
+  (Gradle のログで `embedAndSignAppleFrameworkForXcode SKIPPED` と出るのは正常)。
+- Run Script はログインシェルの設定を読まない。`JAVA_HOME` が無ければ Android Studio 同梱の JBR
+  (`/Applications/Android Studio.app/Contents/jbr/Contents/Home`) を使う。ほかの JDK を使うなら Xcode を起動する環境で `JAVA_HOME` を設定する。
+- `local.properties` (Android SDK の場所) も要る。Gradle が Android のプラグインも読み込むため。
+- `ENABLE_USER_SCRIPT_SANDBOXING = NO`。Xcode のスクリプト用サンドボックスが有効だと Gradle がプロジェクト外に書けず失敗する。
+- シミュレータは Apple Silicon (arm64) だけ。`sharedUi` が `iosArm64` / `iosSimulatorArm64` しか出さないので、x86_64 は除外している。
+- 最低 iOS は 18.5。Compose Multiplatform 同梱の ICU が iOS 18.5 向けにビルドされていて、それより下にするとリンカが警告を出す。
+- 実機で動かすときは Xcode の Signing & Capabilities で自分の Team を選ぶ (プロジェクトには Team を入れていない)。
+- iOS も ATS が平文 http を拒否するので、`iosApp/iosApp/Info.plist` に `NSAppTransportSecurity` / `NSAllowsArbitraryLoads` を入れている
+  (Tailscale の `http://100.x...` を読むため)。
+- スマホ側の Tailscale は App Store の **Tailscale** を入れて、Mac と同じアカウントでログインする (手順 2 と同じ)。
+- ウィジェット (WidgetKit) はまだ無い。Glance は Android 専用なので、iOS では別に作る必要がある。
