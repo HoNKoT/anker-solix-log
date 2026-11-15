@@ -539,13 +539,16 @@ function ensureCard(d){
   return c;
 }
 function updateCard(c,d){
-  const st=devState(d);
+  // 機器どうしの給電は、集計からは引いてあるが、画面では普通の入力 / 出力 (緑 / オレンジの矢印) として見せる
+  const shW=dir=>(d.shared||[]).filter(x=>x.dir===dir).reduce((a,x)=>a+(x.w||0),0);
+  const pin=(d.power_in||0)+shW('in'),pout=(d.power_out||0)+shW('out');
+  const st=devState({...d,power_in:pin,power_out:pout});
   c.ic.innerHTML=bigIconSVG(d.icon,d.battery,st,hasUsbOut(d));
   c.nm.textContent=d.name;
   {const v=d.via||(d.source==='cloud'?'cloud':'ble');c.src.innerHTML=SRCICON[v]||SRCICON.ble;c.src.title=VIA[v]||'Bluetooth'}
   const [lab,cls]=STATE[d.state]||[d.state,''];c.chip.textContent=d.state==='connected'?'':lab;c.chip.className='chip '+cls;c.chip.style.display=d.state==='connected'?'none':'';
   c.pct.replaceChildren(document.createTextNode(d.battery==null?'--':d.battery),el('small','','%'));
-  const idle=(d.power_in||0)<1&&(d.power_out||0)<1;
+  const idle=pin<1&&pout<1;
   c.sub.textContent=idle?'':fmtDHM(d.remaining_h);
   c.info.style.display=idle&&d.standby_w!=null?'':'none';
   if(!c.info.style.display){c.infoTip.textContent='待機電力の目安: 入力も出力も 0W のとき、「いまの残量 × 電池容量 ÷ 機器が出している残り時間」で割り出した値です。機器自身の見積もりを使った目安で、実測ではありません (AC出力やディスプレイが動いていると、実際はもっと増えます)。現在の見積もり: 残量 '+d.battery+'% / 残り '+d.remaining_h+' 時間 → 約 '+d.standby_w+' W。'}
@@ -554,13 +557,20 @@ function updateCard(c,d){
   const kinds=[...new Set((d.ports||[]).filter(p=>p.dir==='in'&&p.w>0&&!p.shared).map(p=>p.key==='solar'?'solar':'other'))];
   const okinds=[...new Set((d.ports||[]).filter(p=>p.dir==='out'&&p.w>0&&!p.shared).map(p=>p.key.startsWith('usb')?'usb':'plug'))];
   const wv=x=>{const v=Math.round(x||0);return '<b>'+v+'</b><small>W</small>'};
-  c.kin.innerHTML=kinds.map(k=>INICON[k]).join('');c.kout.innerHTML=okinds.map(k=>INICON[k]).join('');
-  c.tin.innerHTML=wv(d.power_in);c.tout.innerHTML=wv(d.power_out);
-  c.ain.classList.toggle('on',(d.power_in||0)>=1);c.aout.classList.toggle('on',(d.power_out||0)>=1);
-  c.cin.classList.toggle('hide',(d.power_in||0)<1);c.cout.classList.toggle('hide',(d.power_out||0)<1);
+  // 機器どうしの給電は、ソーラー / USB の記号ではなく相手の機器の形で出す (ポートの記号の下に縦に並ぶ)
+  const peerIcons=dir=>(d.shared||[]).filter(x=>x.dir===dir&&x.w>0).map(x=>{
+    const p=(S.status?S.status.devices:[]).find(o=>o.id===x.peer);
+    if(!p)return INICON.other;
+    const t=el('title');t.textContent=x.peer_name||p.name;  // 名前は機器側で付けられるので、文字列で埋め込まずに DOM でエスケープする
+    return iconSVG(p.icon,p.battery,'',false).replace('<defs>',t.outerHTML+'<defs>')});
+  c.kin.innerHTML=kinds.map(k=>INICON[k]).join('')+peerIcons('in').join('');
+  c.kout.innerHTML=okinds.map(k=>INICON[k]).join('')+peerIcons('out').join('');
+  c.tin.innerHTML=wv(pin);c.tout.innerHTML=wv(pout);
+  c.ain.classList.toggle('on',pin>=1);c.aout.classList.toggle('on',pout>=1);
+  c.cin.classList.toggle('hide',pin<1);c.cout.classList.toggle('hide',pout<1);
   // 電力共有 (機器どうしの USB 給電): 入出力には数えない
   const shr=d.shared||[];c.share.style.display=shr.length?'':'none';
-  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')+' (入出力に数えません)</span>').join('<br>');
+  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')+' (履歴の入出力には数えません)</span>').join('<br>');
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
   const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.hasOuts=olist.length>0;showOuts(c);
   // スイッチの ON/OFF (読み取りのみ)

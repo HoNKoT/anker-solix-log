@@ -1632,7 +1632,8 @@ class Manager:
                     pd = self.registry.get(x["peer"]) if hasattr(self.registry, "get") else None
                     x["peer_name"] = (pd or {}).get("name") or x["peer"]
             cap, b_, rh_ = MODEL_WH.get(d["model"]), item.get("battery"), item.get("remaining_h")
-            if cap and b_ is not None and rh_ and (item.get("power_in") or 0) == 0 and (item.get("power_out") or 0) == 0:
+            # 給電ぶんを引いて 0W になっただけの機器は待機ではない (残り時間は給電込みの見積もりなので、待機電力に見えてしまう)
+            if cap and b_ is not None and rh_ and not shares and (item.get("power_in") or 0) == 0 and (item.get("power_out") or 0) == 0:
                 item["standby_w"] = round(b_ / 100 * cap / rh_, 1)  # 入出力 0W のとき: 残量 ÷ 機器の残り時間 ≒ 待機消費 (目安)
             devs.append(item)
         return {"ok": True, "now": time.time(), "devices": devs}
