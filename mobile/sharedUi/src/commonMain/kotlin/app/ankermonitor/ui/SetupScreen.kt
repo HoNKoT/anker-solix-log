@@ -1,6 +1,5 @@
 package app.ankermonitor.ui
 
-import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -28,12 +27,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import app.ankermonitor.SaveResult
 import app.ankermonitor.shared.Connection
 import app.ankermonitor.shared.normalizeServerUrl
 import kotlinx.coroutines.launch
@@ -51,7 +48,6 @@ fun SetupScreen(
     var busy by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -106,10 +102,8 @@ fun SetupScreen(
                         scope.launch {
                             when (val r = onSave(url, token)) {
                                 SaveResult.Saved -> onDone()
-                                is SaveResult.SavedButUnreachable -> {
-                                    Toast.makeText(context, "保存しました。ただし今は読めません: ${r.message}", Toast.LENGTH_LONG).show()
-                                    onDone()
-                                }
+                                // 保存はできているので閉じる。読めない理由はメイン画面が 3 回失敗した時点で出す
+                                is SaveResult.SavedButUnreachable -> onDone()
                                 is SaveResult.Rejected -> error = r.message
                             }
                             busy = false

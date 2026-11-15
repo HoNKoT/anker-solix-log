@@ -1,15 +1,17 @@
-package app.ankermonitor
+package app.ankermonitor.ui
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.ankermonitor.shared.AnkerApi
 import app.ankermonitor.shared.Connection
 import app.ankermonitor.shared.FetchResult
 import app.ankermonitor.shared.MonitorState
+import app.ankermonitor.shared.MonitorStorage
 import app.ankermonitor.shared.Snapshot
+import app.ankermonitor.shared.StatusPoller
+import app.ankermonitor.shared.currentTimeMillis
 import app.ankermonitor.shared.normalizeServerUrl
 import app.ankermonitor.shared.problem
-import app.ankermonitor.work.StatusRefreshWorker
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.SharingStarted
@@ -33,10 +35,15 @@ sealed interface SaveResult {
     data class Rejected(val message: String) : SaveResult
 }
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val container = application.appContainer
+class MainViewModel(
+    private val storage: MonitorStorage,
+    private val api: AnkerApi,
+    poller: StatusPoller,
+    /** 接続先を保存できたとき (Android はウィジェットの即時更新を積む) */
+    private val onSaved: () -> Unit,
+) : ViewModel() {
 
-    val connection: StateFlow<ConnectionState> = container.storage.connection
+    val connection: StateFlow<ConnectionState> = storage.connection
         .map { it?.let(ConnectionState::Set) ?: ConnectionState.NotSet }
         .stateIn(viewModelScope, SharingStarted.Eagerly, ConnectionState.Loading)
 
@@ -44,11 +51,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     @OptIn(ExperimentalCoroutinesApi::class)
     val monitor: StateFlow<MonitorState> = connection
         .flatMapLatest { state ->
-            if (state is ConnectionState.Set) container.poller.poll(state.connection) else flowOf(MonitorState(loading = false))
+            if (state is ConnectionState.Set) poller.poll(state.connection) else flowOf(MonitorState(loading = false))
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MonitorState())
-
-    fun onAppForeground() = container.pushToWidgetOnNextSuccess()
 
     // 初回は保存した瞬間に設定画面が消えて呼び出し元のスコープが止まるので、続きの保存は viewModelScope で最後までやる
     suspend fun testAndSave(urlInput: String, tokenInput: String): SaveResult =
@@ -58,16 +63,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val url = normalizeServerUrl(urlInput)
         if (url.isEmpty()) return SaveResult.Rejected("接続先を入れてください")
         val candidate = Connection(url, tokenInput.trim())
-        val result = container.api.fetchStatus(candidate)
-        return when (result) {
+        return when (val result = api.fetchStatus(candidate)) {
             is FetchResult.Success -> {
-                container.storage.saveConnection(candidate)
-                container.storage.saveSnapshot(Snapshot(result.status, System.currentTimeMillis()))
-                StatusRefreshWorker.refreshNow(getApplication())
+                storage.saveConnection(candidate)
+                storage.saveSnapshot(Snapshot(result.status, currentTimeMillis()))
+                onSaved()
                 SaveResult.Saved
             }
             is FetchResult.Unreachable -> {
-                container.storage.saveConnection(candidate)
+                storage.saveConnection(candidate)
                 SaveResult.SavedButUnreachable(result.problem(candidate)!!.message)
             }
             else -> SaveResult.Rejected(result.problem(candidate)!!.message)

@@ -13,13 +13,18 @@
 ```
 mobile/
 ├── shared/       Kotlin Multiplatform。/status の型、Ktor の API、URL の補完、定期取得、エラーの言い分け
-│   ├── commonMain    共通ロジック (iOS を足すときもここを使う)
+│   ├── commonMain    共通ロジック
 │   ├── androidMain   OkHttp エンジン、DataStore への保存
-│   └── iosMain       Darwin エンジン (ターゲットは宣言だけ。iOS アプリはまだ無い)
-└── androidApp/   Jetpack Compose の画面、Glance のウィジェット、WorkManager
+│   └── iosMain       Darwin エンジン、NSUserDefaults への保存
+├── sharedUi/     Compose Multiplatform の画面 (設定・メイン)、ViewModel、Preview
+│   └── iosMain       MainViewController() (iOS アプリから呼ぶ入口。iOS アプリの Xcode プロジェクトはまだ無い)
+├── androidApp/   Android の入れ物 (MainActivity)、Glance のウィジェット、WorkManager
+└── screenshots/  Preview のスクリーンショット (android/ と ios/)
 ```
 
-バージョンは `gradle/libs.versions.toml` にまとめてある (AGP 9.5.1 / Kotlin 2.4.21 / Gradle 9.9.1 / Ktor 3.6.1)。
+バージョンは `gradle/libs.versions.toml` にまとめてある (AGP 9.5.1 / Kotlin 2.4.21 / Gradle 9.9.1 / Ktor 3.6.1 /
+Compose Multiplatform 1.12.2)。Material3 は Compose Multiplatform 1.12.2 のリリースノートが組み合わせとして指定している
+`1.12.0-alpha03` (JetBrains 版の Material3 は alpha 番号で出ている)。
 AGP 9 なので、shared は `com.android.kotlin.multiplatform.library` プラグインを使う。
 
 ## ビルド
@@ -36,6 +41,22 @@ cd mobile
 - JDK 17 以上が要る (Android Studio 同梱の JBR でよい)。
 - `local.properties` の `sdk.dir` に Android SDK の場所を書く (Android Studio で開けば自動で作られる)。
 - `./gradlew check` / `allTests` は iOS (Kotlin/Native) までビルドしようとするので、Android だけなら上のタスクを使う。
+
+## Preview とスクリーンショット
+
+画面の Preview は `sharedUi/src/commonMain/.../Previews.kt` にある (見本の値は `/status` の形に合わせた `PreviewSamples`)。
+Android Studio の Preview でも見られるほか、同じ Preview を両 OS で描いて画像にできる:
+
+```bash
+./gradlew :androidApp:recordRoborazziDebug              # → screenshots/android/*.png (Robolectric)
+./gradlew :sharedUi:recordRoborazziIosSimulatorArm64    # → screenshots/ios/*.png (iOS シミュレータ。Xcode が要る)
+```
+
+- 一覧は `screenshotPreviews` (Previews.kt)。Preview を足したらここにも足すと、両 OS の画像が増える。
+- Preview ではダイナミックカラーを切っている (`AnkerTheme(dynamicColor = false)`) ので、両 OS で同じ配色になる。
+- iOS は iPhone 15 相当 (393×852pt @3x) で描く。Android は 411×891dp @xxhdpi。
+- iOS のテストが `dyld_sim mmap() of segment failed` で落ちたら、Xcode 更新直後の CoreSimulator の入れ替えが原因のことがある。もう一度流すと通った。
+- ホーム画面ウィジェット (Glance) はこの仕組みの対象外。
 
 ## スマホで見るまでの手順
 
@@ -91,6 +112,7 @@ amon token new   # トークンを作る (もうあれば `amon token` で表示
 
 ## iOS を足すとき
 
-- `shared` に iOS ターゲット (`iosArm64` / `iosSimulatorArm64`) と Darwin エンジンの実装は入っている。
-- 足りないのは `MonitorStorage` の iOS 実装 (NSUserDefaults / App Group) と、SwiftUI の画面・WidgetKit。
+- 画面 (`sharedUi`)、保存 (`UserDefaultsMonitorStorage`)、Darwin エンジンは入っていて、iOS 向けにもコンパイルできる。
+  `sharedUi` は `SharedUi` という static framework を出す。`MainViewController()` を SwiftUI の `UIViewControllerRepresentable` で包めば表示できる。
+- 足りないのは Xcode プロジェクト (iOS アプリの入れ物) と、ウィジェット (WidgetKit。Glance は Android 専用)。
 - iOS も ATS が http を拒否するので、`NSAppTransportSecurity` の `NSAllowsArbitraryLoads` (または例外) が要る。

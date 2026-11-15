@@ -40,9 +40,7 @@ import app.ankermonitor.shared.label
 import app.ankermonitor.shared.outputWatts
 import app.ankermonitor.shared.powerFlow
 import app.ankermonitor.shared.stateLabel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,7 +82,7 @@ fun MonitorScreen(connection: Connection, state: MonitorState, onOpenSettings: (
                 else -> items(devices, key = { it.id }) { DeviceCard(it) }
             }
             item {
-                val fetched = state.fetchedAtMillis?.let { SimpleDateFormat("HH:mm:ss", Locale.JAPAN).format(Date(it)) }
+                val fetched = state.fetchedAtMillis?.let { formatClock(it, withSeconds = true) }
                 Text(
                     text = connection.url + (fetched?.let { "  ·  $it 更新" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
@@ -125,7 +123,7 @@ private fun DeviceCard(device: Device) {
                 Text("入力 ${device.inputWatts} W   出力 ${device.outputWatts} W", style = MaterialTheme.typography.bodyLarge)
                 device.remainingHours?.let {
                     Text(
-                        "残り時間の目安 ${"%.1f".format(Locale.JAPAN, it)} 時間",
+                        "残り時間の目安 ${(it * 10).roundToInt() / 10.0} 時間",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
