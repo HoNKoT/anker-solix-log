@@ -34,6 +34,7 @@ import app.ankermonitor.shared.MonitorState
 import app.ankermonitor.shared.PowerFlow
 import app.ankermonitor.shared.batteryPercent
 import app.ankermonitor.shared.displayName
+import app.ankermonitor.shared.feedLabels
 import app.ankermonitor.shared.hasReading
 import app.ankermonitor.shared.inputWatts
 import app.ankermonitor.shared.label
@@ -121,6 +122,9 @@ private fun DeviceCard(device: Device) {
                 }
                 LinearProgressIndicator(progress = { pct.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
                 Text("入力 ${device.inputWatts} W   出力 ${device.outputWatts} W", style = MaterialTheme.typography.bodyLarge)
+                device.feedLabels.forEach {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+                }
                 device.remainingHours?.let {
                     Text(
                         "残り時間の目安 ${(it * 10).roundToInt() / 10.0} 時間",

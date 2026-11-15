@@ -34,6 +34,14 @@ val Device.powerFlow: PowerFlow
         }
     }
 
+/** 機器どうしの USB 給電の言い方 (ダッシュボードと同じ)。例: 「SOLIX C2000 Gen 2 から給電中 92 W」 */
+val Device.feedLabels: List<String>
+    get() = shared.orEmpty().filter { it.w >= 1 }.map {
+        val peer = it.peerName?.takeIf { n -> n.isNotBlank() } ?: it.peer
+        val w = it.w.roundToInt()
+        if (it.dir == "in") "$peer から給電中 $w W" else "$peer へ給電中 $w W"
+    }
+
 /** 値が無いときの状態の言い方 (メニューバーアプリのツールチップと同じ) */
 val Device.stateLabel: String
     get() = when (state) {

@@ -35,6 +35,18 @@ data class Device(
     val via: String? = null,
     val ports: List<Port>? = null,
     @SerialName("remaining_h") val remainingHours: Double? = null,
+    /** 機器どうしの USB 給電 (バックエンドの find_sharing)。このぶんは power_in / power_out から引かれている */
+    val shared: List<Share>? = null,
+)
+
+@Serializable
+data class Share(
+    val key: String,
+    /** in = 相手から給電されている / out = 相手へ給電している */
+    val dir: String,
+    val w: Double = 0.0,
+    val peer: String,
+    @SerialName("peer_name") val peerName: String? = null,
 )
 
 @Serializable

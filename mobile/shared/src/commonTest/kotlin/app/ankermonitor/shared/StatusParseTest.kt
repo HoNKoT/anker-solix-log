@@ -74,6 +74,31 @@ class StatusParseTest {
     }
 
     @Test
+    fun 給電している側は相手へ給電中と出る() {
+        val c1000 = parseStatus(STATUS_JSON).devices[0]
+        assertEquals(listOf("C300 へ給電中 30 W"), c1000.feedLabels)
+    }
+
+    @Test
+    fun usbで給電されている側は相手から給電中と出る() {
+        // C2000 Gen 2 の USB-C から C300 DC を充電しているときの C300 DC (2026-11-15 の実機の /status)
+        val json = """
+            {"ok": true, "devices": [{"id": "cloud-eddb1d0c", "name": "SOLIX C300 DC", "state": "connected",
+              "battery": 86, "power_in": 0, "power_out": 0, "charging": "CHARGING",
+              "ports": [{"key": "in_usb", "label": "USB入力", "dir": "in", "w": 92, "shared": true}],
+              "shared": [{"key": "in_usb", "dir": "in", "w": 92, "peer": "cloud-186f3359", "peer_name": "SOLIX C2000 Gen 2"}]}]}
+        """
+        val c300 = parseStatus(json).devices[0]
+        assertEquals(listOf("SOLIX C2000 Gen 2 から給電中 92 W"), c300.feedLabels)
+        assertEquals(PowerFlow.CHARGING, c300.powerFlow)
+    }
+
+    @Test
+    fun 給電が無ければ何も出ない() {
+        assertTrue(parseStatus(STATUS_JSON).devices[1].feedLabels.isEmpty())
+    }
+
+    @Test
     fun 機器が無い応答を読める() {
         val status = parseStatus("""{"ok": true, "now": 1763200000.0, "devices": []}""")
         assertTrue(status.devices.isEmpty())

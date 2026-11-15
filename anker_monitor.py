@@ -98,6 +98,8 @@ PORT_PROPS = [
     ("usb_a2_power", "usb_a2", "USB-A2", "out"),
 ]
 PORT_INFO = {key: (label, direction) for _attr, key, label, direction in PORT_PROPS}
+# 双方向の USB ポートが入力側になっているぶん (ポート状態 2 = 入力)。usb_ で始めないのは、出力側の USB 合計 (usb_*) に混ぜないため
+PORT_INFO["in_usb"] = ("USB入力", "in")
 PORT_INFO["other_in"] = ("入力 その他", "in")
 PORT_INFO["other_out"] = ("出力 その他", "out")
 
@@ -260,7 +262,7 @@ class Registry:
 
 # ───────────────────────── 履歴 (SQLite) ─────────────────────────
 # 内訳の列 (log テーブルの列名 = ポートのキー)。列を足すときはここに足す (既存の DB には自動で ALTER)
-PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["other_in", "other_out"]
+PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "other_in", "other_out"]
 CHG_CODE = {"IDLE": 0, "CHARGING": 1, "DISCHARGING": 2}
 SCHEMA_VERSION = 2
 
@@ -307,7 +309,8 @@ class HistoryDB:
                 ("pout", "出力 合計", "out", "W", ""), ("chg", "状態", None, "", "0=待機 1=充電 2=放電"),
                 ("temp", "温度", None, "℃", "")]
         rows += [(k, lb, d, "W", "ポート別。0W のときは NULL (記録しない)") for _a, k, lb, d in PORT_PROPS]
-        rows += [("other_in", *PORT_INFO["other_in"][:1], "in", "W", "合計とポート合計の差分"),
+        rows += [("in_usb", PORT_INFO["in_usb"][0], "in", "W", "USB ポートからの入力 (双方向ポートの入力側)"),
+                 ("other_in", *PORT_INFO["other_in"][:1], "in", "W", "合計とポート合計の差分"),
                  ("other_out", *PORT_INFO["other_out"][:1], "out", "W", "合計とポート合計の差分")]
         self.db.executemany("INSERT OR REPLACE INTO log_columns VALUES(?,?,?,?,?)", rows)
         self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
@@ -866,7 +869,7 @@ def find_sharing(vals: dict[str, dict]) -> dict[str, list[dict]]:
                 if any(x["key"] == pa["key"] for x in out.get(a, [])):
                     continue
                 for pb in vb.get("ports") or []:
-                    if pb["dir"] != "in" or pb["key"] not in ("other_in", "ac_in") or pb["w"] < SHARE_MIN_W:
+                    if pb["dir"] != "in" or pb["key"] not in ("in_usb", "other_in", "ac_in") or pb["w"] < SHARE_MIN_W:
                         continue
                     if any(x["key"] == pb["key"] for x in out.get(b, [])):
                         continue
@@ -965,6 +968,10 @@ class BleSource(Source):
             v = _get(conn, attr)
             if isinstance(v, (int, float)):
                 values[key] = v
+        for key in [k for k in values if k.startswith("usb_")]:  # 入力側になっている USB ポートは出力に数えない
+            st = _get(conn, "usb_port_" + key[4:])  # usb_c2 → usb_port_c2
+            if getattr(st, "value", None) == USB_PORT_INPUT:
+                values["in_usb"] = values.get("in_usb", 0) + values.pop(key)
         remaining = _get(conn, "time_remaining")
         return {
             "battery": _get(conn, "battery_percentage"),
@@ -1003,8 +1010,10 @@ def _csum(d: dict, *names):
 
 
 # クラウドの項目名 → ポートのキー (anker-solix-api の PPS 向け MQTT マップ)
+USB_PORT_INPUT = 2  # USB ポートの状態: 0 未接続 / 1 出力 / 2 入力 (クラウドの usbc_N_status、SolixBLE の PortStatus とも同じ)
+
 CLOUD_PORTS = [
-    (("dc_input_power_total", "photovoltaic_power"), "solar"),
+    (("photovoltaic_power", "dc_input_power_total"), "solar"),
     (("ac_input_power_total",), "ac_in"),
     (("ac_output_power",), "ac_out"),
     (("dc_12v_1_power",), "dc_out"),  # シガーソケット。dc_output_power_total は USB も含む合計なので使わない
@@ -1016,18 +1025,29 @@ CLOUD_PORTS = [
 def cloud_read(v: dict) -> dict:
     """クラウド (MQTT) の値を、BLE と同じ形にそろえる。値は文字列で来るので _cnum で数に直す。"""
     values = {}
+    usb_in = 0
+    dc_total = _cnum(v, "dc_output_power_total")
     for names, key in CLOUD_PORTS:
-        if key == "solar":  # ソーラー入力は、項目が2つあっても大きい方 (同じ値のことが多い)
-            ws = [x for x in (_cnum(v, n) for n in names) if x is not None]
-            w = max(ws) if ws else None
-        else:
-            w = _cnum(v, *names)
-        if w is not None:
-            values[key] = w
+        w = _cnum(v, *names)
+        if w is None:
+            continue
+        if key.startswith("usb_"):
+            st = _cnum(v, names[0].replace("_power", "_status"))
+            # usbc_N_power は向きを持たない。状態の項目が無い機種では、DC 出力の合計 (USB を含む) を超えるぶんは
+            # 出力ではありえないので入力とみなす
+            if st == USB_PORT_INPUT or (st is None and dc_total is not None and w >= 1 and w > dc_total + 1):
+                usb_in += w  # 双方向の USB-C が入力側 (別の機器から給電されている)
+                continue
+        values[key] = w
+    if usb_in:
+        values["in_usb"] = usb_in
+        # dc_input_power_total は USB 入力も含んだ DC 入力の合計なので、そのままソーラーにすると USB 給電が太陽光に見える。
+        # photovoltaic_power がある機種 (C300 DC) はそれがソーラー。無い機種は合計から USB 入力を引いた残り
+        if _cnum(v, "photovoltaic_power") is None and "solar" in values:
+            values["solar"] = max(0, values["solar"] - usb_in)
     # DC 出力の合計 (dc_output_power_total) は USB-C/A もシガーも全部入った値。
     # シガー専用の項目が無い機種 (C2000 Gen 2 など) は「合計 − USB」をシガーとする
     usb_sum = sum(w for k, w in values.items() if k.startswith("usb_"))
-    dc_total = _cnum(v, "dc_output_power_total")
     if "dc_out" not in values and dc_total is not None:
         rest = dc_total - usb_sum
         values["dc_out"] = rest if rest >= 1 else 0
