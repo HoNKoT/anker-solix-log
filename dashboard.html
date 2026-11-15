@@ -935,6 +935,9 @@ async function loadStatus(){
 window.addEventListener('resize',()=>{if(S.tab==='now')for(const c of Object.values(S.cards))drawCard(c);if(S.tab==='history')drawHist()});
 $('scan-btn').onclick=doScan;$('diag-btn').onclick=doDiag;
 renderNowControls();hoverInit();renderScan();
-loadStatus();setInterval(loadStatus,2000);
-setInterval(()=>{if(S.tab==='now')refreshNow();if(S.tab==='history'&&S.hist.offset===0&&S.hist.range!=='day')loadHistory()},15000);
+// 閉じたポップオーバーや裏のタブでも WebView のタイマーは動き続ける。メニューバーが別に /status を読んでいるので、見えない間は止める
+const tick15=()=>{if(S.tab==='now')refreshNow();if(S.tab==='history'&&S.hist.offset===0&&S.hist.range!=='day')loadHistory()};
+loadStatus();setInterval(()=>{if(!document.hidden)loadStatus()},2000);
+setInterval(()=>{if(!document.hidden)tick15()},15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){loadStatus();tick15()}});
 </script></body></html>

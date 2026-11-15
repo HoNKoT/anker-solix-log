@@ -11,6 +11,8 @@
 #   amon demo         ダミー値で動かす (画面確認用。先に amon stop)
 #   amon autostart on|off   ログイン時に自動起動
 #   amon lan on|off   スマホなど同じ Wi-Fi の端末から見られるようにする (見るだけ。URL を表示)
+#   amon token [new|off]  このMac以外から読むときのトークン (表示 / 作り直し / やめる)
+#   amon remote <URL> <トークン>  (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
 #   amon cloud-setup  クラウド(Wi-Fi経由)で読む部品を入れる (Python 3.12 以上が必要。足りなければ環境を作り直す)
 #   amon scan-all    周りのBluetooth機器を全部表示 (機種が見つからないとき用。先に amon stop)
 #   amon link         どこからでも amon で呼べるようにする (PATH 上にリンク作成)
@@ -33,6 +35,8 @@ PY_DST="$DATA/anker_monitor.py"
 PORT=19877
 LABEL="dev.amon.anker-monitor"
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
+TOKEN_FILE="$DATA/api_token"
+REMOTE_FILE="$DATA/remote.json"
 
 # ~/Documents 配下だとアプリが読むたびに権限を聞かれるので、実行用のコピーは ~/.anker-monitor に置く
 
@@ -55,6 +59,10 @@ find_python() {
 }
 
 backend_up() { curl -fsS --max-time 2 "http://localhost:$PORT/status" >/dev/null 2>&1; }
+is_remote() { [ -f "$REMOTE_FILE" ]; }
+remote_get() {  # remote.json の項目 (url / token) を読む
+  /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$REMOTE_FILE" "$1" 2>/dev/null
+}
 app_running() { pgrep -f "$APP_BIN" >/dev/null 2>&1; }
 
 install_python_side() {
@@ -92,6 +100,10 @@ cmd_start() {
   [ -d "$APP" ] || { err "アプリがありません → amon setup"; return 1; }
   open "$APP"
   local i
+  if is_remote; then
+    for i in 1 2 3 4 5; do app_running && { ok "起動しました (リモート表示: $(remote_get url))"; return 0; }; sleep 1; done
+    warn "アプリが起動しません"; return 1
+  fi
   for i in 1 2 3 4 5 6 7 8; do backend_up && { ok "起動しました (メニューバーを見てください)"; return 0; }; sleep 1; done
   warn "バックエンドの応答待ちです。amon logs で様子を見てください"
 }
@@ -124,6 +136,9 @@ EOF
 
 cmd_deploy() {
   say "反映して再起動"
+  if is_remote; then  # 見る側の Mac: バックエンドは使わないので、アプリだけ作り直す
+    cmd_stop; build_app || return 1; cmd_start; return
+  fi
   python3 -c 'import sys; compile(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1], "exec")' \
       "$SRC_DIR/anker_monitor.py" || { err "anker_monitor.py に構文エラーがあります"; return 1; }
   cmd_stop
@@ -134,6 +149,16 @@ cmd_deploy() {
 
 cmd_status() {
   if app_running; then ok "メニューバーアプリ: 起動中"; else warn "メニューバーアプリ: 停止"; fi
+  if is_remote; then
+    local url tok; url="$(remote_get url)"; tok="$(remote_get token)"
+    say "リモート表示: $url"
+    curl -fsS --max-time 5 ${tok:+-H "Authorization: Bearer $tok"} "$url/status" | /usr/bin/python3 -c '
+import json, sys
+for d in json.load(sys.stdin)["devices"]:
+    print("   %s [%s]  バッテリー %s%%  入力 %sW  出力 %sW" % (d.get("name") or d["id"], d.get("state"), d.get("battery"), d.get("power_in"), d.get("power_out")))
+' 2>/dev/null || warn "応答なし (Tailscale / 記録している Mac / トークンを確認)"
+    return 0
+  fi
   if backend_up; then
     ok "バックエンド: 応答あり (http://localhost:$PORT)"
     curl -fsS "http://localhost:$PORT/status" | "$VENV/bin/python" -c '
@@ -161,13 +186,60 @@ cmd_lan() {
 lan_urls() {
   local h ip
   h="$(scutil --get LocalHostName 2>/dev/null)"
-  [ -n "$h" ] && say "スマホ用 URL: http://$h.local:$PORT"
-  for ip in $(ipconfig getifaddr en0 2>/dev/null) $(ipconfig getifaddr en1 2>/dev/null); do say "スマホ用 URL: http://$ip:$PORT"; done
+  local q=""; [ -s "$TOKEN_FILE" ] && q="/?token=$(cat "$TOKEN_FILE")"
+  [ -n "$h" ] && say "スマホ用 URL: http://$h.local:$PORT$q"
+  for ip in $(ipconfig getifaddr en0 2>/dev/null) $(ipconfig getifaddr en1 2>/dev/null); do say "スマホ用 URL: http://$ip:$PORT$q"; done
   # Tailscale (VPN) が入っていれば、外出先用の URL も出す
   local ts; ts="$(command -v tailscale || ls /Applications/Tailscale.app/Contents/MacOS/Tailscale 2>/dev/null | head -1)"
   if [ -n "$ts" ]; then
-    for ip in $("$ts" ip -4 2>/dev/null); do say "外出先用 URL (Tailscale): http://$ip:$PORT"; done
+    for ip in $("$ts" ip -4 2>/dev/null); do say "外出先用 URL (Tailscale): http://$ip:$PORT$q"; done
   fi
+  [ -s "$TOKEN_FILE" ] || warn "トークンが未設定です。同じネットワークの誰でも読めます → amon token new"
+}
+
+cmd_token() {
+  case "${1:-}" in
+    new)
+      mkdir -p "$DATA"
+      ( umask 077; openssl rand -hex 24 > "$TOKEN_FILE" ) || { err "トークンを作れませんでした"; return 1; }
+      ok "トークンを作りました (このMac以外からは、これが無いと読めません。再起動は不要)"
+      echo "   $(cat "$TOKEN_FILE")"
+      echo "   見る側の Mac で: amon remote http://<このMacの Tailscale IP>:$PORT $(cat "$TOKEN_FILE")"
+      echo "   スマホなどのブラウザでは、最初に 1 回だけトークンを入れる画面が出ます (amon lan の URL なら入力不要)" ;;
+    off) rm -f "$TOKEN_FILE"; ok "トークンをやめました (LAN 公開中は、同じネットワークの誰でも読めます)" ;;
+    "")  if [ -s "$TOKEN_FILE" ]; then ok "トークン: $(cat "$TOKEN_FILE")"; else say "トークン: 未設定 (amon token new で作る)"; fi ;;
+    *)   echo "使い方: amon token [new|off]"; return 1 ;;
+  esac
+}
+
+cmd_remote() {
+  case "${1:-}" in
+    off)
+      rm -f "$REMOTE_FILE"; ok "リモート表示をやめました (この Mac で記録します)"
+      cmd_stop; cmd_start ;;
+    "")
+      if is_remote; then ok "リモート表示: $(remote_get url)"; else say "リモート表示: オフ (この Mac で記録しています)"; fi ;;
+    *)
+      local url="$1" tok="${2:-}"
+      case "$url" in http://*|https://*) ;; *) url="http://$url" ;; esac
+      url="${url%/}"
+      case "${url#*://}" in *:*) ;; *) url="$url:$PORT" ;; esac
+      say "接続を確認中: $url"
+      local code; code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 ${tok:+-H "Authorization: Bearer $tok"} "$url/status")"
+      case "$code" in
+        200) ok "読めました" ;;
+        401) err "トークンが違います (記録している Mac で amon token を確認)"; return 1 ;;
+        403) err "断られました (403)。記録している Mac で amon lan on にしてください"; return 1 ;;
+        *)   warn "応答がありません (HTTP $code)。Tailscale と記録している Mac を確認してください。設定は保存します" ;;
+      esac
+      mkdir -p "$DATA"
+      ( umask 077; /usr/bin/python3 -c 'import json,sys; json.dump({"url": sys.argv[1], "token": sys.argv[2]}, open(sys.argv[3], "w"))' \
+          "$url" "$tok" "$REMOTE_FILE" ) || { err "設定を保存できませんでした"; return 1; }
+      ok "リモート表示にしました。この Mac では Bluetooth もバックエンドも動かしません ($REMOTE_FILE)"
+      cmd_stop
+      build_app || return 1  # 古いアプリにはリモート表示が無いので、毎回作り直す
+      cmd_start ;;
+  esac
 }
 
 cmd_autostart() {
@@ -252,6 +324,8 @@ case "${1:-}" in
   demo)      install_python_side && exec "$VENV/bin/python" "$PY_DST" --demo ;;
   link)      cmd_link ;;
   lan)       shift; cmd_lan "${1:-}" ;;
+  token)     shift; cmd_token "${1:-}" ;;
+  remote)    shift; cmd_remote "$@" ;;
   autostart) shift; cmd_autostart "${1:-}" ;;
   *)         usage ;;
 esac

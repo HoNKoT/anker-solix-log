@@ -32,6 +32,7 @@ import argparse
 import collections
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import math
@@ -43,7 +44,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urlparse
 
 LOG = logging.getLogger("anker-monitor")
 
@@ -128,6 +129,18 @@ MODEL_WH = {"c300dc": 288, "c300": 288, "c800": 768, "c1000": 1056, "c1000g2": 1
             "f2000": 2048, "f2600": 2560, "f3800": 3840}  # 電池容量 Wh (ロスの推定に使う)
 LAN_FLAG = DATA_DIR / "lan"  # このファイルがあれば、同じネットワークのスマホなどからも見られる (amon lan on)
 SETTINGS_FILE = DATA_DIR / "settings.json"
+TOKEN_FILE = DATA_DIR / "api_token"  # あれば、このMac以外からの読み取りにこのトークンを求める (amon token new)
+TOKEN_COOKIE = "amon_token"
+PAGE_PATHS = ("/", "/index.html", "/history", "/devices")
+
+
+def api_token() -> str | None:
+    # 毎回読むのは、amon token new / off をバックエンドの再起動なしで効かせるため
+    try:
+        t = TOKEN_FILE.read_text().strip()
+    except OSError:
+        return None
+    return t or None
 DEFAULT_SETTINGS = {"price_per_kwh": 39.5, "sample_interval": 10}
 
 
@@ -1663,6 +1676,8 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
             ログイン情報・機器の操作・履歴の削除・設定の変更はできない。"""
             ip = self.client_address[0]
             if ip not in ("127.0.0.1", "::1", "::ffff:127.0.0.1") and not loopback:
+                if not self._token_ok():
+                    return False
                 path = urlparse(self.path).path
                 if write or path not in LAN_READ_PATHS:
                     self._json({"error": "このMac以外からは見るだけです"}, 403)
@@ -1676,6 +1691,49 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                 self._json({"error": "forbidden origin"}, 403)
                 return False
             return True
+
+        def _token_ok(self) -> bool:
+            """トークンが設定されていれば、Authorization: Bearer / Cookie / ?token= のどれかで一致を求める。
+            ダッシュボードの fetch は相対パスでヘッダーを付けられないので、ブラウザと WebView は Cookie で通す。
+            ?token= で来たら Cookie に移して、トークンを外した URL へ飛ばし直す (アドレス欄と履歴に残さない)。"""
+            want = api_token()
+            if not want:
+                return True
+            u = urlparse(self.path)
+            q = parse_qs(u.query)
+            auth = self.headers.get("Authorization", "")
+            got = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+            if got is None:
+                for part in (self.headers.get("Cookie") or "").split(";"):
+                    k, _, v = part.strip().partition("=")
+                    if k == TOKEN_COOKIE:
+                        got = v
+            from_query = q.get("token", [None])[0]
+            if from_query is not None:
+                got = from_query
+            if got is not None and hmac.compare_digest(got.encode(), want.encode()):
+                if from_query is not None and self.command == "GET":
+                    rest = urlencode([(k, v) for k, vs in q.items() if k != "token" for v in vs])
+                    self.send_response(303)
+                    self.send_header("Set-Cookie", f"{TOKEN_COOKIE}={want}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000")
+                    self.send_header("Location", u.path + ("?" + rest if rest else ""))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return False
+                return True
+            if u.path in PAGE_PATHS and not (u.path == "/history" and "dev" in q):
+                wrong = "<p style='color:#c33'>トークンが違います</p>" if got is not None else ""
+                page = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+                        "<title>Anker Monitor</title><body style='font-family:system-ui;padding:24px;max-width:420px'>"
+                        "<h3>Anker Monitor</h3><p>このMac以外から見るには、トークンが必要です。"
+                        "記録している Mac で <code>amon token</code> を実行すると表示されます。</p>" + wrong +
+                        "<form method=get><input name=token type=password autocomplete=current-password "
+                        "style='width:100%;padding:8px;font-size:16px' placeholder='トークン' autofocus>"
+                        "<p><button style='padding:8px 16px;font-size:16px'>開く</button></p></form>")
+                self._send(401, page.encode(), "text/html")
+            else:
+                self._json({"error": "トークンが必要です (Authorization: Bearer <token>)"}, 401)
+            return False
 
         def _body(self) -> dict:
             n = int(self.headers.get("Content-Length") or 0)
@@ -1693,7 +1751,7 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
             u = urlparse(self.path)
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
-                if u.path in ("/", "/index.html", "/history", "/devices") and not (u.path == "/history" and "dev" in parse_qs(u.query)):
+                if u.path in PAGE_PATHS and not (u.path == "/history" and "dev" in parse_qs(u.query)):
                     self._send(200, HTML_FILE.read_bytes(), "text/html")
                 elif u.path == "/status":
                     self._json(mgr.snapshot())

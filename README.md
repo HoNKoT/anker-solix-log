@@ -28,7 +28,7 @@ Anker のポタ電の **バッテリー残量・入力W・出力W・ポート別
 前提: Apple Silicon の macOS、Xcode Command Line Tools (`xcode-select --install`)、Python 3.11 以上 (`brew install python@3.13`)。
 
 ```sh
-cd ~/Documents/GitHub/anker-ble
+cd ~/Documents/GitHub/anker-solix-log
 chmod +x amon
 ./amon setup
 ./amon autostart on     # (任意) ログイン時に自動起動
@@ -122,6 +122,8 @@ Bluetooth は Mac の近くでしか読めません。Wi-Fi につながった�
 ./amon logs          # バックエンドのログ
 ./amon run --debug   # バックエンドを前面で動かして詳細ログを見る
 ./amon demo          # ダミー機器・ダミー履歴で画面確認 (先に ./amon stop)
+./amon token new     # このMac以外から読むときのトークンを作る (amon token で表示 / off でやめる)
+./amon remote <URL> <トークン>   # (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
 ```
 
 ## うまくいかないとき
@@ -136,7 +138,7 @@ Bluetooth は Mac の近くでしか読めません。Wi-Fi につながった�
 
 ## 他の Mac から見る
 
-バックエンドを `--host 0.0.0.0` で起動すると、同じネットワークの別 Mac から `http://<このMacのIP>:19877` で見られます (**認証はありません。自宅/社内LAN内だけで使ってください**。登録や削除の操作も別 Mac からできてしまいます)。外出先で使うなら、持ち歩く Mac で動かして上の「クラウド」で読む形が基本です (自宅の Mac の画面を外から見る仕組みは入れていません)。
+`amon lan on` にすると、同じネットワークや Tailscale の別 Mac から `http://<このMacのIP>:19877` で見られます (見るだけ)。メニューバーで見たいときは、下の「別の Mac のメニューバーで見る (リモート表示・トークン)」を使ってください。`amon token new` でトークンを作っていなければ認証はないので、その場合は自宅の LAN か Tailscale の中だけで使ってください。
 
 ## 対応機種
 
@@ -189,12 +191,12 @@ Bluetooth は Mac の近くでしか読めません。Wi-Fi につながった�
 ### 初回: リポジトリを作って上げる (このMacで)
 
 ```bash
-cd anker-ble                      # この README があるフォルダ
+cd anker-solix-log                    # この README があるフォルダ
 git init -b main                  # すでに git 管理なら不要
 chmod +x amon && git add -A       # amon の実行権限も一緒に記録される
 git status                        # cloud.json / history*.db / venv が入っていないことを確認
 git commit -m "Anker Monitor"
-gh repo create anker-monitor --private --source=. --push   # または GitHub でリポジトリを作って git remote add / git push
+gh repo create anker-solix-log --private --source=. --push   # または GitHub でリポジトリを作って git remote add / git push
 ```
 
 ### 別の Mac に入れる
@@ -202,7 +204,7 @@ gh repo create anker-monitor --private --source=. --push   # または GitHub �
 前提: macOS 12 以上、Xcode Command Line Tools (`xcode-select --install`)、Python 3.12 以上 (`brew install python@3.13`)。
 
 ```bash
-git clone <リポジトリの URL> anker-monitor && cd anker-monitor
+git clone https://github.com/HoNKoT/anker-solix-log.git && cd anker-solix-log
 ./amon setup           # 環境作成 → 部品導入 (requirements.txt) → アプリをビルド → 起動
 ./amon link            # (任意) どこからでも amon で呼べるようにする
 ./amon autostart on    # (任意) ログイン時に自動起動
@@ -240,7 +242,7 @@ git clone <リポジトリの URL> anker-monitor && cd anker-monitor
 
 - 初回は macOS が「python への受信接続を許可しますか」と聞くので「許可」します。
 - スマホでは **見るだけ** です。このMac以外からは、Anker のログイン情報・機器の登録・履歴の削除・設定変更の API はすべて 403 で、画面からも隠れます (「機器」タブ、電気代の単価、履歴の削除など)。
-- 公開されるのは電力の数値と履歴だけですが、認証はありません。家の Wi-Fi 内だけで使い、ゲスト Wi-Fi やカフェの Wi-Fi では `lan off` にしてください。外出先から見たいときは Tailscale などの VPN を使う方法があります。
+- 公開されるのは電力の数値と履歴だけです。`amon token new` でトークンを作ると、このMac以外からはトークンが無いと読めなくなります (下記)。作っていなければ認証はないので、家の Wi-Fi 内だけで使い、ゲスト Wi-Fi やカフェの Wi-Fi では `lan off` にしてください。外出先から見たいときは Tailscale などの VPN を使う方法があります。
 
 ### 外出先から見る (Tailscale)
 
@@ -261,3 +263,44 @@ git clone <リポジトリの URL> anker-monitor && cd anker-monitor
 
 - ある機器の USB-C 出力と、別の機器の USB 入力 (ソーラー以外) がほぼ同じ量 (差が 10 W か 25% 以内、5 W 以上) のとき、そのぶんは「電力共有」とみなします。出力にも入力にも数えず (履歴・節電記録も同様)、カードに「◯◯ へ共有中」と出ます。
 - カードは「入力 (ソーラー/USB) → 機種アイコン (大きめ) → 出力 (USB/プラグ)」の並びに変えました。接続中のタグは出さず、機種名は小さい補助表示です。
+
+## 別の Mac のメニューバーで見る (リモート表示・トークン)
+
+記録している Mac (Bluetooth / クラウドで読んでいる Mac) の値を、別の Mac のメニューバーで見られます。見る側の Mac は Bluetooth もバックエンドも動かさず、記録している Mac の API を読むだけです。
+
+- **現在値**: メニューバーのアプリが `GET /status` を 2 秒ごとに読みます (数 KB。前の応答を待っている間は次を投げません。3 回続けて読めないと点線になります)
+- **履歴**: ポップオーバー・ウィンドウでグラフや履歴を開いたときだけ読みます (`/api/history` `/ports` `/summary` `/api/daily`)
+
+ブラウザでダッシュボードを開きっぱなしにすると、`/status` を 2 秒ごとに読むうえ、「いま」のグラフを開いている間は 15 秒ごとに履歴を取り直して描き直します (タブが裏にある間は止まります)。ずっと見張るだけなら、メニューバーの方が軽いです。
+
+### 記録している Mac で
+
+```bash
+./amon deploy        # (この機能を入れたあと 1 回) 新しいバックエンドに入れ替える
+./amon lan on        # このMac以外から読めるようにする (見るだけ)
+./amon token new     # トークンを作る。表示された値を控える (再起動は不要)
+./amon lan           # Tailscale の IP (100.x.y.z) と URL を確認
+```
+
+### 見る側の Mac で
+
+```bash
+git clone https://github.com/HoNKoT/anker-solix-log.git && cd anker-solix-log
+# <トークン> は記録している Mac で ./amon token を実行して表示される値 (amon remote が取りに行くことはしない)
+./amon remote 100.x.y.z <トークン>    # URL は http:// と :19877 を省略可。MagicDNS の名前 (mac.xxx.ts.net) でも可
+./amon status                          # 読めているか確認
+./amon remote off                      # やめる (この Mac で記録する通常の動きに戻す)
+```
+
+- 見る側でコードを更新したら (`git pull`)、`amon deploy` でアプリを作り直します (リモート表示のときはアプリだけ作ります)。
+- 見る側に Python や部品は要りません (`amon remote` はアプリだけビルドします。Xcode Command Line Tools は必要です)。設定は `~/.anker-monitor/remote.json` (0600) に入ります。
+- 見る側のメニューには「機器を追加…」「バックエンドを再起動」は出ません (機器の登録・削除・設定変更は、記録している Mac からだけ)。
+- 残量 10% 未満の通知は、見る側の Mac でも出ます。
+
+### トークンの仕組み
+
+- トークンは `~/.anker-monitor/api_token` (0600) に入ります。**このファイルがあると、このMac以外からの読み取りにはすべてトークンが要ります** (このMac自身の画面は不要)。
+- 渡し方: `Authorization: Bearer <トークン>` ヘッダー、または Cookie `amon_token`。メニューバーのアプリはヘッダーで、ダッシュボード (WebView) には Cookie で渡します。
+- スマホなどのブラウザ: 最初に開いたときに、トークンを入れる画面が出ます。`amon lan` が出す URL (`/?token=…` 付き) で開けば入力は要りません。どちらの場合もトークンは Cookie に移し、URL からは消します (1 年有効)。
+- トークンを作り直す (`amon token new`) と、古いトークンは使えなくなります。見る側の Mac で `amon remote` をやり直し、スマホは開き直してトークンを入れてください。
+- 自分のスクリプトから読むとき: `curl -H "Authorization: Bearer <トークン>" http://100.x.y.z:19877/status`

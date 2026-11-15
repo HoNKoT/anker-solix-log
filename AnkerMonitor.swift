@@ -16,10 +16,33 @@ import WebKit
 
 // MARK: - 定数
 
-let baseURL = URL(string: "http://localhost:19877")!
 let dataDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".anker-monitor")
 let launchConfigURL = dataDir.appendingPathComponent("launch.json")
 let backendLogURL = dataDir.appendingPathComponent("backend.log")
+
+/// ~/.anker-monitor/remote.json があれば「リモートモード」: 自分では Bluetooth もバックエンドも動かさず、
+/// 別の Mac のバックエンド (amon lan on + amon token new) を見に行く。amon remote <URL> <トークン> が作る。
+struct RemoteConfig: Decodable {
+    let url: String
+    let token: String?
+}
+
+let remote: RemoteConfig? = {
+    guard let data = try? Data(contentsOf: dataDir.appendingPathComponent("remote.json")),
+          let cfg = try? JSONDecoder().decode(RemoteConfig.self, from: data),
+          URL(string: cfg.url)?.host != nil else { return nil }
+    return cfg
+}()
+let isRemote = remote != nil
+let baseURL = URL(string: remote?.url ?? "http://localhost:19877")!
+let remoteToken = remote?.token.flatMap { $0.isEmpty ? nil : $0 }
+
+/// ブラウザには WebView の Cookie が渡らないので、リモートのときは ?token= を付けて開く (バックエンドが Cookie に移して URL から消す)
+func browserURL(_ url: URL) -> URL {
+    guard let t = remoteToken, var c = URLComponents(url: url, resolvingAgainstBaseURL: true) else { return url }
+    c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "token", value: t)]
+    return c.url ?? url
+}
 
 // MARK: - /status の形
 
@@ -130,10 +153,23 @@ final class DashboardViewController: NSViewController, WKNavigationDelegate {
 
     @objc private func detachTapped() { onOpenWindow?(currentURL.path.isEmpty ? "/" : currentURL.path) }
 
-    @objc private func browserTapped() { NSWorkspace.shared.open(currentURL) }
+    @objc private func browserTapped() { NSWorkspace.shared.open(browserURL(currentURL)) }
+
+    private var cookieReady = remoteToken == nil
 
     func load() {
         web.navigationDelegate = self  // ビューを作る前に load されても失敗を拾えるように
+        // ダッシュボードの fetch は相対パスでヘッダーを付けられないので、トークンは Cookie で渡す (読み込みより先に入れる)
+        if !cookieReady, let t = remoteToken, let host = baseURL.host,
+           let cookie = HTTPCookie(properties: [.name: "amon_token", .value: t, .domain: host, .path: "/",
+                                                .expires: Date().addingTimeInterval(365 * 86400)]) {
+            web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) { [weak self] in
+                guard let self else { return }
+                self.cookieReady = true
+                self.web.load(URLRequest(url: self.currentURL))
+            }
+            return
+        }
         web.load(URLRequest(url: currentURL))
     }
 
@@ -170,7 +206,7 @@ final class DashboardViewController: NSViewController, WKNavigationDelegate {
             if url.path == "/open-in-browser" {
                 let to = URLComponents(url: url, resolvingAgainstBaseURL: false)?
                     .queryItems?.first(where: { $0.name == "to" })?.value ?? "/"
-                NSWorkspace.shared.open(URL(string: to, relativeTo: baseURL)?.absoluteURL ?? baseURL)
+                NSWorkspace.shared.open(browserURL(URL(string: to, relativeTo: baseURL)?.absoluteURL ?? baseURL))
                 decisionHandler(.cancel)
                 return
             }
@@ -577,16 +613,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
 
     // MARK: 状態の取得
 
+    private var inFlight = false
+    private var remoteFailures = 0
+
     private func fetch() {
+        // VPN 越しは 2 秒を超えることがあるので、前の応答を待っている間は次を投げない (重ねると詰まる)
+        if inFlight { return }
+        inFlight = true
         var req = URLRequest(url: baseURL.appendingPathComponent("status"))
-        req.timeoutInterval = 1.5
-        URLSession.shared.dataTask(with: req) { [weak self] data, _, _ in
-            let status = data.flatMap { try? JSONDecoder().decode(Status.self, from: $0) }
+        req.timeoutInterval = isRemote ? 5 : 1.5
+        if let t = remoteToken { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            let status = code == 200 ? data.flatMap { try? JSONDecoder().decode(Status.self, from: $0) } : nil
             DispatchQueue.main.async {
                 guard let self = self else { return }
+                self.inFlight = false
                 if let status = status {
                     self.configProblem = nil
+                    self.remoteFailures = 0
                     self.apply(status)
+                } else if isRemote {
+                    // 自分のバックエンドは起動しない (起動すると、この Mac で Bluetooth を読み始めてしまう)。
+                    // Wi-Fi の切り替えなどで 1〜2 回取りこぼすのはよくあるので、3 回続いてから未接続の表示にする
+                    self.remoteFailures += 1
+                    if code == 401 {
+                        self.configProblem = "トークンが違います。記録している Mac の amon token の値で amon remote をやり直してください"
+                    } else if code == 403 {
+                        self.configProblem = "\(baseURL.host ?? "") に断られました (403)。記録している Mac で amon lan on になっているか確認してください"
+                    } else {
+                        self.configProblem = nil
+                    }
+                    if self.remoteFailures >= 3 || self.configProblem != nil { self.applyBackendDown() }
                 } else {
                     self.applyBackendDown()
                     self.startBackendIfNeeded()
@@ -715,8 +773,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     }
 
     private func applyBackendDown() {
+        let waiting = isRemote ? "\(baseURL.host ?? "") に接続できません (Tailscale と、記録している Mac が起きているか確認してください)"
+                               : "バックエンドを起動しています…"
         setIcons([IconSpec(kind: "compact", pct: nil, charging: false, connected: false, loading: configProblem == nil)],
-                 tooltip: configProblem ?? "バックエンドを起動しています…")
+                 tooltip: configProblem ?? waiting)
     }
 
     private var spinTimer: Timer?
@@ -787,12 +847,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         fl.state = UserDefaults.standard.bool(forKey: "windowFloating") ? .on : .off
         m.addItem(fl)
         add("履歴を開く", #selector(openHistory))
-        add("機器を追加…", #selector(openDevices))
+        if !isRemote { add("機器を追加…", #selector(openDevices)) }  // リモートからは機器の操作はできない (403)
         add("ブラウザで開く", #selector(openBrowser))
         m.addItem(.separator())
         add("通知をテスト", #selector(testNotification))
-        add("バックエンドのログを表示", #selector(revealLog))
-        add("バックエンドを再起動", #selector(restartBackend))
+        if isRemote {
+            let info = NSMenuItem(title: "リモート表示: \(baseURL.host ?? "")", action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            m.addItem(info)
+        } else {
+            add("バックエンドのログを表示", #selector(revealLog))
+            add("バックエンドを再起動", #selector(restartBackend))
+        }
         m.addItem(.separator())
         add("終了", #selector(quit), "q")
         return m
@@ -877,7 +943,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     // MARK: メニュー項目
 
     @objc private func openBrowser() {
-        NSWorkspace.shared.open(baseURL)
+        NSWorkspace.shared.open(browserURL(baseURL))
     }
 
     @objc private func revealLog() {
