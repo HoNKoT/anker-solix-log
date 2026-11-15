@@ -100,6 +100,9 @@ PORT_PROPS = [
 PORT_INFO = {key: (label, direction) for _attr, key, label, direction in PORT_PROPS}
 # 双方向の USB ポートが入力側になっているぶん (ポート状態 2 = 入力)。usb_ で始めないのは、出力側の USB 合計 (usb_*) に混ぜないため
 PORT_INFO["in_usb"] = ("USB入力", "in")
+# 機器どうしの給電 (find_sharing で対応づいたぶん)。入力・出力の合計 (pin / pout) からは引き、履歴ではこの列に記録する
+PORT_INFO["xfer_in"] = ("転送入力", "in")
+PORT_INFO["xfer_out"] = ("転送出力", "out")
 PORT_INFO["other_in"] = ("入力 その他", "in")
 PORT_INFO["other_out"] = ("出力 その他", "out")
 
@@ -262,7 +265,7 @@ class Registry:
 
 # ───────────────────────── 履歴 (SQLite) ─────────────────────────
 # 内訳の列 (log テーブルの列名 = ポートのキー)。列を足すときはここに足す (既存の DB には自動で ALTER)
-PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "other_in", "other_out"]
+PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "xfer_in", "xfer_out", "other_in", "other_out"]
 CHG_CODE = {"IDLE": 0, "CHARGING": 1, "DISCHARGING": 2}
 SCHEMA_VERSION = 2
 
@@ -310,6 +313,8 @@ class HistoryDB:
                 ("temp", "温度", None, "℃", "")]
         rows += [(k, lb, d, "W", "ポート別。0W のときは NULL (記録しない)") for _a, k, lb, d in PORT_PROPS]
         rows += [("in_usb", PORT_INFO["in_usb"][0], "in", "W", "USB ポートからの入力 (双方向ポートの入力側)"),
+                 ("xfer_in", PORT_INFO["xfer_in"][0], "in", "W", "別の機器からの給電。pin には含めない"),
+                 ("xfer_out", PORT_INFO["xfer_out"][0], "out", "W", "別の機器への給電。pout には含めない"),
                  ("other_in", *PORT_INFO["other_in"][:1], "in", "W", "合計とポート合計の差分"),
                  ("other_out", *PORT_INFO["other_out"][:1], "out", "W", "合計とポート合計の差分")]
         self.db.executemany("INSERT OR REPLACE INTO log_columns VALUES(?,?,?,?,?)", rows)
@@ -889,6 +894,17 @@ def net_of_sharing(item: dict, shares: list[dict]) -> None:
         if item.get(k) is not None:
             item[k] = max(0, item[k] - x["w"])
     item["shared"] = shares
+
+
+def sample_ports(ports: list[dict]) -> dict[str, int]:
+    """履歴に書くポート別の W。給電ぶん (shared) は元のポートではなく転送入力 / 転送出力にまとめる。"""
+    out: dict[str, int] = {}
+    for p in ports:
+        if p["w"] <= 0:
+            continue
+        key = ("xfer_in" if p["dir"] == "in" else "xfer_out") if p.get("shared") else p["key"]
+        out[key] = out.get(key, 0) + p["w"]
+    return out
 
 
 class BleSource(Source):
@@ -1579,7 +1595,7 @@ class Manager:
                 buf.setdefault(d["id"], []).append({
                     "pct": v["battery"], "pin": v.get("power_in") or 0, "pout": v.get("power_out") or 0,
                     "temp": v.get("temperature"), "chg": v.get("charging"),
-                    "ports": {p["key"]: p["w"] for p in v.get("ports") or [] if p["w"] > 0 and not p.get("shared")}})
+                    "ports": sample_ports(v.get("ports") or [])})
             if time.time() - last_flush >= SAMPLE_INTERVAL - 1 and buf:
                 samples, ports = [], []
                 for dev, xs in buf.items():

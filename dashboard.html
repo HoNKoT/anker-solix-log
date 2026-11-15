@@ -278,7 +278,7 @@ const VIA={ble:'Bluetooth',cloud:'クラウド'};
 const SRC={ble:'Bluetooth',cloud:'クラウド',auto:'Bluetooth + クラウド'};
 const STATE={connected:['接続中','ok'],connecting:['接続しています…',''],searching:['探しています…',''],offline:['オフライン','bad']};
 const CHG={CHARGING:'充電中',DISCHARGING:'放電中',IDLE:'待機中',UNKNOWN:''};
-const PCOL={solar:'#f2b01e',ac_in:'#34a853',in_usb:'#2f6fed',other_in:'#9aa0a6',
+const PCOL={solar:'#f2b01e',ac_in:'#34a853',in_usb:'#2f6fed',xfer_in:'#14b8a6',xfer_out:'#f97316',other_in:'#9aa0a6',
   ac_out:'#e8590c',dc_out:'#d6336c',dc1_out:'#b5179e',dc2_out:'#7209b7',usb_c1:'#2f6fed',usb_c2:'#0ea5e9',
   usb_c3:'#06b6d4',usb_c4:'#5c6bc0',usb_a1:'#8d6e63',usb_a2:'#78909c',other_out:'#9aa0a6'};
 const pcol=k=>PCOL[k]||'#888';
@@ -570,7 +570,7 @@ function updateCard(c,d){
   c.cin.classList.toggle('hide',pin<1);c.cout.classList.toggle('hide',pout<1);
   // 電力共有 (機器どうしの USB 給電): 入出力には数えない
   const shr=d.shared||[];c.share.style.display=shr.length?'':'none';
-  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')+' (履歴の入出力には数えません)</span>').join('<br>');
+  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')+' (履歴では'+(x.dir==='out'?'転送出力':'転送入力')+'として記録)</span>').join('<br>');
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
   const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.hasOuts=olist.length>0;showOuts(c);
   // スイッチの ON/OFF (読み取りのみ)
