@@ -545,9 +545,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         popoverVC.onOpenWindow = { [weak self] path in self?.detachToWindow(path) }
 
         fetch()
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        startPolling()
+    }
+
+    /// リモートのときだけ、メニューで選んだ間隔 (秒) で読む。ローカルは常に 2 秒
+    private static let remoteIntervalChoices = [2, 5, 10, 30, 60]
+    private var pollInterval: Int {
+        guard isRemote else { return 2 }
+        let v = UserDefaults.standard.integer(forKey: "remotePollInterval")
+        return Self.remoteIntervalChoices.contains(v) ? v : 2
+    }
+
+    private func startPolling() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: TimeInterval(pollInterval), repeats: true) { [weak self] _ in
             self?.fetch()
         }
+    }
+
+    @objc private func setRemoteInterval(_ item: NSMenuItem) {
+        UserDefaults.standard.set(item.tag, forKey: "remotePollInterval")
+        startPolling()
+        fetch()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
@@ -855,6 +874,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
             let info = NSMenuItem(title: "リモート表示: \(baseURL.host ?? "")", action: nil, keyEquivalent: "")
             info.isEnabled = false
             m.addItem(info)
+            let sub = NSMenu()
+            for s in Self.remoteIntervalChoices {
+                let it = NSMenuItem(title: "\(s) 秒ごと", action: #selector(setRemoteInterval(_:)), keyEquivalent: "")
+                it.target = self
+                it.tag = s
+                it.state = s == pollInterval ? .on : .off
+                sub.addItem(it)
+            }
+            let iv = NSMenuItem(title: "更新間隔", action: nil, keyEquivalent: "")
+            iv.submenu = sub
+            m.addItem(iv)
         } else {
             add("バックエンドのログを表示", #selector(revealLog))
             add("バックエンドを再起動", #selector(restartBackend))
