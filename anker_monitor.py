@@ -101,8 +101,10 @@ PORT_INFO = {key: (label, direction) for _attr, key, label, direction in PORT_PR
 # 双方向の USB ポートが入力側になっているぶん (ポート状態 2 = 入力)。usb_ で始めないのは、出力側の USB 合計 (usb_*) に混ぜないため
 PORT_INFO["in_usb"] = ("USB入力", "in")
 # 機器どうしの給電 (find_sharing で対応づいたぶん)。入力・出力の合計 (pin / pout) からは引き、履歴ではこの列に記録する
-PORT_INFO["xfer_in"] = ("転送入力", "in")
-PORT_INFO["xfer_out"] = ("転送出力", "out")
+PORT_INFO["xfer_in"] = ("Transfer (受け取り)", "in")
+PORT_INFO["xfer_out"] = ("Transfer (送り出し)", "out")
+# 送り出した W − 相手が受け取った W。入力にも出力にも属さないので dir は "loss" (グラフの入力 / 出力の積み上げに入れない)
+PORT_INFO["xfer_loss"] = ("Transfer ロス", "loss")
 PORT_INFO["other_in"] = ("入力 その他", "in")
 PORT_INFO["other_out"] = ("出力 その他", "out")
 
@@ -265,7 +267,7 @@ class Registry:
 
 # ───────────────────────── 履歴 (SQLite) ─────────────────────────
 # 内訳の列 (log テーブルの列名 = ポートのキー)。列を足すときはここに足す (既存の DB には自動で ALTER)
-PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "xfer_in", "xfer_out", "other_in", "other_out"]
+PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "xfer_in", "xfer_out", "xfer_loss", "other_in", "other_out"]
 CHG_CODE = {"IDLE": 0, "CHARGING": 1, "DISCHARGING": 2}
 SCHEMA_VERSION = 2
 
@@ -314,7 +316,10 @@ class HistoryDB:
         rows += [(k, lb, d, "W", "ポート別。0W のときは NULL (記録しない)") for _a, k, lb, d in PORT_PROPS]
         rows += [("in_usb", PORT_INFO["in_usb"][0], "in", "W", "USB ポートからの入力 (双方向ポートの入力側)"),
                  ("xfer_in", PORT_INFO["xfer_in"][0], "in", "W", "別の機器からの給電。pin には含めない"),
-                 ("xfer_out", PORT_INFO["xfer_out"][0], "out", "W", "別の機器への給電。pout には含めない"),
+                 ("xfer_out", PORT_INFO["xfer_out"][0], "out", "W",
+                  "別の機器への給電 (相手が受け取った W)。pout には含めない"),
+                 ("xfer_loss", PORT_INFO["xfer_loss"][0], "loss", "W",
+                  "給電の送り出し W − 受け取り W。送り側・受け側の両方に記録。pin / pout には含めない"),
                  ("other_in", *PORT_INFO["other_in"][:1], "in", "W", "合計とポート合計の差分"),
                  ("other_out", *PORT_INFO["other_out"][:1], "out", "W", "合計とポート合計の差分")]
         self.db.executemany("INSERT OR REPLACE INTO log_columns VALUES(?,?,?,?,?)", rows)
@@ -879,8 +884,9 @@ def find_sharing(vals: dict[str, dict]) -> dict[str, list[dict]]:
                     if any(x["key"] == pb["key"] for x in out.get(b, [])):
                         continue
                     if abs(pa["w"] - pb["w"]) <= max(SHARE_ABS_W, SHARE_REL * max(pa["w"], pb["w"])):
-                        out.setdefault(a, []).append({"key": pa["key"], "dir": "out", "w": pa["w"], "peer": b})
-                        out.setdefault(b, []).append({"key": pb["key"], "dir": "in", "w": pb["w"], "peer": a})
+                        pair = {"sent": pa["w"], "recv": pb["w"]}
+                        out.setdefault(a, []).append({"key": pa["key"], "dir": "out", "w": pa["w"], "peer": b, **pair})
+                        out.setdefault(b, []).append({"key": pb["key"], "dir": "in", "w": pb["w"], "peer": a, **pair})
                         break
     return out
 
@@ -896,14 +902,23 @@ def net_of_sharing(item: dict, shares: list[dict]) -> None:
     item["shared"] = shares
 
 
-def sample_ports(ports: list[dict]) -> dict[str, int]:
-    """履歴に書くポート別の W。給電ぶん (shared) は元のポートではなく転送入力 / 転送出力にまとめる。"""
+def sample_ports(ports: list[dict], shares: list[dict] | None = None) -> dict[str, int]:
+    """履歴に書くポート別の W。給電ぶん (shared) は元のポートには書かず、
+    送り側・受け側とも「相手が受け取った W」を Transfer に、差をロスに書く。
+    送り側の Transfer を自分のポートの W にしないのは、両側の Transfer を同じ量にそろえるため
+    (98W 送って 92W 届いたなら、Transfer 92W + ロス 6W)。"""
     out: dict[str, int] = {}
     for p in ports:
-        if p["w"] <= 0:
+        if p["w"] <= 0 or p.get("shared"):
             continue
-        key = ("xfer_in" if p["dir"] == "in" else "xfer_out") if p.get("shared") else p["key"]
-        out[key] = out.get(key, 0) + p["w"]
+        out[p["key"]] = out.get(p["key"], 0) + p["w"]
+    for x in shares or []:
+        recv = x.get("recv", x["w"])
+        key = "xfer_in" if x["dir"] == "in" else "xfer_out"
+        out[key] = out.get(key, 0) + recv
+        loss = x.get("sent", x["w"]) - recv
+        if loss > 0:  # 計測の誤差で受け取りのほうが多いときは、ロス 0 とする
+            out["xfer_loss"] = out.get("xfer_loss", 0) + loss
     return out
 
 
@@ -1595,7 +1610,7 @@ class Manager:
                 buf.setdefault(d["id"], []).append({
                     "pct": v["battery"], "pin": v.get("power_in") or 0, "pout": v.get("power_out") or 0,
                     "temp": v.get("temperature"), "chg": v.get("charging"),
-                    "ports": sample_ports(v.get("ports") or [])})
+                    "ports": sample_ports(v.get("ports") or [], shared.get(d["id"]))})
             if time.time() - last_flush >= SAMPLE_INTERVAL - 1 and buf:
                 samples, ports = [], []
                 for dev, xs in buf.items():

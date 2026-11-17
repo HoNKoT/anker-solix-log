@@ -48,6 +48,8 @@ select,input{font:inherit;color:var(--fg);background:var(--soft);border:1px soli
 .flow .ic svg{width:100%;height:calc(76px*var(--fs,1));display:block}
 .fcol{position:relative;flex:0 1 calc(56px*var(--fs,1));min-width:0;height:calc(76px*var(--fs,1));display:flex;align-items:center;justify-content:center}
 .fcol.hide>*{visibility:hidden}
+.fcol .floss{position:absolute;left:50%;top:calc(50% + 36px*var(--fs,1));transform:translateX(-50%);margin-top:calc(8px*var(--fs,1));font-size:calc(10.5px*var(--fs,1));font-weight:700;color:var(--sub);white-space:nowrap;font-variant-numeric:tabular-nums}
+.flow.has-loss{padding-bottom:calc(20px*var(--fs,1))}
 .fcol .fside{position:absolute;left:50%;top:calc(50% + 12px*var(--fs,1));transform:translateX(-50%);margin-top:calc(8px*var(--fs,1))}
 .kind{flex:none;width:calc(22px*var(--fs,1));height:calc(76px*var(--fs,1));display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
 .kind svg{width:calc(20px*var(--fs,1));height:calc(20px*var(--fs,1));flex:none}
@@ -278,7 +280,7 @@ const VIA={ble:'Bluetooth',cloud:'クラウド'};
 const SRC={ble:'Bluetooth',cloud:'クラウド',auto:'Bluetooth + クラウド'};
 const STATE={connected:['接続中','ok'],connecting:['接続しています…',''],searching:['探しています…',''],offline:['オフライン','bad']};
 const CHG={CHARGING:'充電中',DISCHARGING:'放電中',IDLE:'待機中',UNKNOWN:''};
-const PCOL={solar:'#f2b01e',ac_in:'#34a853',in_usb:'#2f6fed',xfer_in:'#14b8a6',xfer_out:'#f97316',other_in:'#9aa0a6',
+const PCOL={solar:'#f2b01e',ac_in:'#34a853',in_usb:'#2f6fed',xfer_in:'#14b8a6',xfer_out:'#f97316',xfer_loss:'#ef4444',other_in:'#9aa0a6',
   ac_out:'#e8590c',dc_out:'#d6336c',dc1_out:'#b5179e',dc2_out:'#7209b7',usb_c1:'#2f6fed',usb_c2:'#0ea5e9',
   usb_c3:'#06b6d4',usb_c4:'#5c6bc0',usb_a1:'#8d6e63',usb_a2:'#78909c',other_out:'#9aa0a6'};
 const pcol=k=>PCOL[k]||'#888';
@@ -520,7 +522,7 @@ function ensureCard(d){
   const ic=el('span','ic');const tin=el('div','fside l'),tout=el('div','fside r');const ain=el('span','farrow in'),aout=el('span','farrow out');ain.innerHTML=ARROW;aout.innerHTML=ARROW;
   const kin=el('div','kind l'),kout=el('div','kind r');
   // 列ごとに「矢印 + 真下のW」を1つの箱にして、箱の中で左右中央に揃える。0W のときは visibility で隠す (場所は空けたまま)
-  const cin=el('div','fcol'),cout=el('div','fcol');cin.append(ain,tin);cout.append(aout,tout);
+  const cin=el('div','fcol'),cout=el('div','fcol');cin.append(ain,tin);const tloss=el('div','floss');cout.append(aout,tout,tloss);
   const head=el('div','flow');head.append(kin,cin,ic,cout,kout);
   const share=el('div','share');share.style.display='none';
   const outs=el('div','outs');const sw=el('div','sw');
@@ -534,7 +536,7 @@ function ensureCard(d){
   dsum.addEventListener('click',e=>{e.preventDefault();setFold(det,!det.classList.contains('is-open'),gkey)});
   body.append(top2,head,infoTip,share,outs,sw,detail,det);
   $('cards').append(root);
-  c=S.cards[d.id]={root,fill,stp,ic,ain,aout,cin,cout,kin,kout,src,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
+  c=S.cards[d.id]={root,fill,stp,ic,ain,aout,cin,cout,kin,kout,src,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,tloss,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
   cardHover(c);
   return c;
 }
@@ -566,11 +568,16 @@ function updateCard(c,d){
   c.kin.innerHTML=kinds.map(k=>INICON[k]).join('')+peerIcons('in').join('');
   c.kout.innerHTML=okinds.map(k=>INICON[k]).join('')+peerIcons('out').join('');
   c.tin.innerHTML=wv(pin);c.tout.innerHTML=wv(pout);
+  // 給電のロス (送り出し − 相手の受け取り) は、送り側のカードの出力の下に出す
+  const lossW=(d.shared||[]).filter(x=>x.dir==='out').reduce((a,x)=>a+Math.max(0,(x.sent??x.w)-(x.recv??x.w)),0);
+  c.tloss.textContent=lossW>=1?'('+Math.round(lossW)+' W loss)':'';c.cout.parentElement.classList.toggle('has-loss',lossW>=1);
   c.ain.classList.toggle('on',pin>=1);c.aout.classList.toggle('on',pout>=1);
   c.cin.classList.toggle('hide',pin<1);c.cout.classList.toggle('hide',pout<1);
   // 電力共有 (機器どうしの USB 給電): 入出力には数えない
   const shr=d.shared||[];c.share.style.display=shr.length?'':'none';
-  c.share.innerHTML=shr.map(x=>INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')+' (履歴では'+(x.dir==='out'?'転送出力':'転送入力')+'として記録)</span>').join('<br>');
+  c.share.innerHTML=shr.map(x=>{const l=Math.max(0,(x.sent??x.w)-(x.recv??x.w));
+    return INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')
+      +' (履歴では Transfer '+(x.recv??x.w)+' W'+(l>=1?' + '+l+' W loss':'')+' として記録し、入出力には含めない)</span>'}).join('<br>');
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
   const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.hasOuts=olist.length>0;showOuts(c);
   // スイッチの ON/OFF (読み取りのみ)
@@ -692,7 +699,7 @@ function drawHist(){
 function renderHistLegend(){
   const h=S.hist,lg=$('h-legend');lg.replaceChildren();
   if(h.mode==='total'){lg.innerHTML='<span><i style="background:var(--in)"></i>入力</span><span><i style="background:var(--out)"></i>出力</span><span><i style="background:var(--pct);opacity:.4"></i>残量 %</span>'}
-  else if(h.ports){for(const t of h.ports.totals){const s=el('span');const i=el('i');i.style.background=pcol(t.key);s.append(i,document.createTextNode(t.label));lg.append(s)}}
+  else if(h.ports){for(const t of h.ports.totals.filter(t=>t.dir!=='loss')){const s=el('span');const i=el('i');i.style.background=pcol(t.key);s.append(i,document.createTextNode(t.label));lg.append(s)}}
 }
 function renderSummary(){
   const s=S.hist.summary||{},box=$('h-sum');box.replaceChildren();
@@ -701,17 +708,30 @@ function renderSummary(){
   cell(fWh(s.wh_in),'入力した電力量');cell(fWh(s.wh_out),'出力した電力量');
   cell(fW(s.pin_max),'入力の最大');cell(fW(s.pout_max),'出力の最大');cell(fW(s.pout_avg),'出力の平均');
   cell(s.pct_min+' 〜 '+s.pct_max+' %','残量の範囲');cell(s.pct_start+' → '+s.pct_end+' %','期間の始めと終わり');
+  const x=xferTotals(S.hist.ports);
+  if(x)cell(fWh(x.wh),'Transfer ('+x.label+')'+(x.loss>=0.05?' · '+fWh(x.loss)+' loss':'')+'。入出力には含めない');
+}
+// 機器どうしの給電 (Transfer) の期間合計。送り側は xfer_out、受け側は xfer_in。ロスは両側に同じ値が入っている
+function xferTotals(p){
+  if(!p)return null;const g=k=>p.totals.find(t=>t.key===k);const i=g('xfer_in'),o=g('xfer_out'),l=g('xfer_loss');
+  if(!i&&!o)return null;
+  return {wh:(i?.wh||0)+(o?.wh||0),loss:l?.wh||0,label:i&&o?'受け取り・送り出し':i?'受け取り':'送り出し'};
 }
 function renderPortTable(){
   const p=S.hist.ports,card=$('h-ports-card'),box=$('h-ports');box.replaceChildren();
   if(!p||!p.totals.length){card.hidden=true;return}card.hidden=false;
   for(const [dir,title] of [['in','入力'],['out','出力']]){
-    const rows=p.totals.filter(t=>t.dir===dir);if(!rows.length)continue;const sum=rows.reduce((a,r)=>a+r.wh,0)||1;
+    // Transfer は機器の間を移っただけなので、入力・出力の割合には混ぜない (下に別の行で出す)
+    const rows=p.totals.filter(t=>t.dir===dir&&!t.key.startsWith('xfer_'));if(!rows.length)continue;const sum=rows.reduce((a,r)=>a+r.wh,0)||1;
     const t=el('table');const th=el('tr');['',title+' 電力量','割合','使用中の平均','最大'].forEach((x,i)=>th.append(el('th','',i?x:title+'のポート')));t.append(th);
     for(const r of rows){const tr=el('tr');const c0=el('td');const dot=el('i','dot');dot.style.background=pcol(r.key);c0.append(dot,document.createTextNode(r.label));
       tr.append(c0,el('td','',fWh(r.wh)),el('td','',Math.round(r.wh/sum*100)+'%'),el('td','',r.avg_active+' W'),el('td','',r.max+' W'));t.append(tr)}
     box.append(t);box.append(el('div','',''));
   }
+  const x=xferTotals(p);
+  if(x){const t=el('table');const th=el('tr');['機器どうしの給電','Transfer','ロス'].forEach(v=>th.append(el('th','',v)));t.append(th);
+    const tr=el('tr');const c0=el('td');const dot=el('i','dot');dot.style.background=pcol(x.label==='受け取り'?'xfer_in':'xfer_out');
+    c0.append(dot,document.createTextNode(x.label));tr.append(c0,el('td','',fWh(x.wh)),el('td','',fWh(x.loss)));t.append(tr);box.append(t)}
 }
 function hoverInit(){
   const cv=$('h-chart'),tip=$('h-tip');
