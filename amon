@@ -13,6 +13,8 @@
 #   amon lan on|off   スマホなど同じ Wi-Fi の端末から見られるようにする (見るだけ。URL を表示)
 #   amon token [new|off]  このMac以外から読むときのトークン (表示 / 作り直し / やめる)
 #   amon remote <URL> <トークン>  (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
+#   amon get <パス>   API を読んで JSON を出す (リモート表示中なら記録している Mac から、トークン付きで)
+#                     例: amon get '/api/raw?hours=48'  /api/raw?dev=<id>&from=<UNIX秒>&to=<UNIX秒>
 #   amon cloud-setup  クラウド(Wi-Fi経由)で読む部品を入れる (Python 3.12 以上が必要。足りなければ環境を作り直す)
 #   amon scan-all    周りのBluetooth機器を全部表示 (機種が見つからないとき用。先に amon stop)
 #   amon link         どこからでも amon で呼べるようにする (PATH 上にリンク作成)
@@ -307,6 +309,19 @@ cmd_cloud_setup() {
   echo "ダッシュボードの「機器」タブ > クラウド から Anker のメールアドレスとパスワードでログインしてください。"
 }
 
+# トークンを引数や画面に出さないよう、remote.json から読んで curl の設定 (標準入力) で渡す
+cmd_get() {
+  local path="${1:-}"
+  [ -n "$path" ] || { err "使い方: amon get '/api/raw?hours=48'"; return 1; }
+  case "$path" in /*) ;; *) path="/$path" ;; esac
+  if is_remote; then
+    local url tok; url="$(remote_get url)"; tok="$(remote_get token)"
+    printf 'header = "Authorization: Bearer %s"\n' "$tok" | curl -fsS --max-time 60 -K - "$url$path"
+  else
+    curl -fsS --max-time 60 "http://localhost:$PORT$path"
+  fi
+}
+
 usage() { sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 case "${1:-}" in
@@ -326,6 +341,7 @@ case "${1:-}" in
   lan)       shift; cmd_lan "${1:-}" ;;
   token)     shift; cmd_token "${1:-}" ;;
   remote)    shift; cmd_remote "$@" ;;
+  get)       shift; cmd_get "${1:-}" ;;
   autostart) shift; cmd_autostart "${1:-}" ;;
   *)         usage ;;
 esac

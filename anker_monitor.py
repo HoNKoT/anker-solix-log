@@ -33,6 +33,7 @@ import collections
 import asyncio
 import hashlib
 import hmac
+import itertools
 import json
 import logging
 import math
@@ -295,6 +296,57 @@ class HistoryDB:
         self._migrate()
         self._ensure()
         self._ids = {d: i for d, i in self.db.execute("SELECT dev, id FROM devices")}
+        if self.db.execute("PRAGMA user_version").fetchone()[0] < 1:
+            self.fix_sharing()
+            self.db.execute("PRAGMA user_version=1")
+
+    def fix_sharing(self) -> dict:
+        """記録済みの log を、いまの find_sharing で見直して、機器どうしの給電を Transfer に書き直す (1 回だけ)。
+        2 本以上のケーブルで送っていた区間は、以前の判定 (ポート 1 本ずつの比較) では見つからず、
+        送り側の出力・受け側の入力のまま残っているため。同じ時刻の行どうしを対応づける
+        (サンプルは全機器を同じ時刻で書き、間引きも同じ区切りでそろうので、時刻が一致する)。
+        書き直した (機器, 日) の節電記録は消し、次の refresh_savings で作り直させる。"""
+        port_cols = [c for c in PORT_COLS if not c.startswith("xfer_")]
+        sel = ", ".join(f"COALESCE({c},0)" for c in port_cols)
+        with self.lock:
+            rows = self.db.execute(
+                f"SELECT dev, ts, pin, pout, COALESCE(xfer_in,0), COALESCE(xfer_out,0), COALESCE(xfer_loss,0), {sel} "
+                "FROM log WHERE ts IN (SELECT ts FROM log GROUP BY ts HAVING COUNT(*) > 1) ORDER BY ts").fetchall()
+        off = time.localtime().tm_gmtoff or 0
+        updates, touched = [], set()
+        for ts, grp in itertools.groupby(rows, key=lambda r: r[1]):
+            grp = {r[0]: r for r in grp}
+            vals = {str(d): {"state": "connected",
+                             "ports": [{"key": c, "dir": PORT_INFO[c][1], "w": w}
+                                       for c, w in zip(port_cols, r[7:]) if w > 0 and c in PORT_INFO]}
+                    for d, r in grp.items()}
+            for d, shares in find_sharing(vals).items():
+                r = grp[int(d)]
+                pin, pout, x_in, x_out, x_loss = r[2], r[3], r[4], r[5], r[6]
+                cols = {}
+                for x in shares:
+                    cols[x["key"]] = None
+                    if x["dir"] == "in":
+                        x_in += x["recv"]
+                        pin = (pin or 0) - x["w"]
+                    else:
+                        x_out += x["recv"]
+                        pout = (pout or 0) - x["w"]
+                    x_loss += max(0, x["sent"] - x["recv"])
+                cols.update({"pin": pin if pin and pin > 0 else None, "pout": max(0, pout or 0),
+                             "xfer_in": x_in or None, "xfer_out": x_out or None, "xfer_loss": x_loss or None})
+                updates.append((int(d), ts, cols))
+                touched.add((int(d), time.strftime("%Y-%m-%d", time.gmtime(ts + off))))
+        with self.lock:
+            for d, ts, cols in updates:
+                self.db.execute(f"UPDATE log SET {', '.join(f'{c}=?' for c in cols)} WHERE dev=? AND ts=?",
+                                [*cols.values(), d, ts])
+            self.db.executemany("DELETE FROM savings WHERE dev=? AND day=?", sorted(touched))
+            self.db.commit()
+        if updates:
+            LOG.info("機器どうしの給電を Transfer に書き直しました: %s 行 (%s)", len(updates),
+                     ", ".join(sorted({day for _d, day in touched})))
+        return {"rows": len(updates), "days": sorted(touched)}
 
     # ── スキーマ ──
     def _ensure(self) -> None:
@@ -467,6 +519,26 @@ class HistoryDB:
                  "FROM log l JOIN devices d ON d.id = l.dev GROUP BY l.dev")
             return [{"id": r[0], "name": r[1], "model": r[2], "first": r[3], "last": r[4]}
                     for r in self.db.execute(q).fetchall()]
+
+    def raw(self, dev: str | None, t0: float, t1: float, limit: int) -> dict:
+        """解析用: log の行を間引かず全列そのまま返す (列の意味は columns_info)。dev なしなら全機器。
+        limit を超える分は新しい側を切る (truncated で分かる)。"""
+        with self.lock:
+            cols = [r[1] for r in self.db.execute("PRAGMA table_info(log)") if r[1] != "dev"]
+            devs = self.db.execute("SELECT id, dev, COALESCE(name, dev), COALESCE(model,'') FROM devices").fetchall()
+            if dev:
+                devs = [d for d in devs if d[1] == dev]
+            ids = {d[0]: d[1] for d in devs}
+            rows = []
+            if ids:
+                marks = ",".join("?" * len(ids))
+                rows = self.db.execute(f"SELECT dev, {', '.join(cols)} FROM log WHERE dev IN ({marks}) AND ts>=? AND ts<=? "
+                                       f"ORDER BY ts LIMIT ?", [*ids, int(t0), int(t1), limit + 1]).fetchall()
+            info = {r[0]: {"label": r[1], "dir": r[2], "unit": r[3], "note": r[4]}
+                    for r in self.db.execute("SELECT col, label, dir, unit, note FROM log_columns")}
+        return {"devices": [{"id": d[1], "name": d[2], "model": d[3], "capacity_wh": MODEL_WH.get(d[3])} for d in devs],
+                "columns": ["dev", *cols], "columns_info": info, "truncated": len(rows) > limit,
+                "rows": [[ids[r[0]], *r[1:]] for r in rows[:limit]]}
 
     def series(self, dev: str, t0: float, t1: float, bucket: int) -> list[list]:
         """[時刻, 残量%, 入力W, 出力W, 入力最大, 出力最大]。入力が全部 0W (NULL) の区間は入力が None。"""
@@ -897,25 +969,45 @@ def find_sharing(vals: dict[str, dict]) -> dict[str, list[dict]]:
     機器の間を行き来しているだけ (消費でも発電でもない) とみなす。戻り値: 機器ID → [{key, dir, w, peer}]"""
     out: dict[str, list[dict]] = {}
     live = {i: v for i, v in vals.items() if v.get("state") == "connected"}
-    for a, va in live.items():
-        for b, vb in live.items():
-            if a == b:
+
+    def used(dev: str, key: str) -> bool:
+        return any(x["key"] == key for x in out.get(dev, []))
+
+    def close(x: float, y: float) -> bool:
+        return abs(x - y) <= max(SHARE_ABS_W, SHARE_REL * max(x, y))
+
+    for b, vb in live.items():
+        for pb in vb.get("ports") or []:
+            if pb["dir"] != "in" or pb["key"] not in ("in_usb", "other_in", "ac_in") or pb["w"] < SHARE_MIN_W \
+                    or used(b, pb["key"]):
                 continue
-            for pa in va.get("ports") or []:
-                if pa["dir"] != "out" or not pa["key"].startswith("usb_c") or pa["w"] < SHARE_MIN_W:
+            match = None
+            for a, va in live.items():
+                if a == b:
                     continue
-                if any(x["key"] == pa["key"] for x in out.get(a, [])):
-                    continue
-                for pb in vb.get("ports") or []:
-                    if pb["dir"] != "in" or pb["key"] not in ("in_usb", "other_in", "ac_in") or pb["w"] < SHARE_MIN_W:
-                        continue
-                    if any(x["key"] == pb["key"] for x in out.get(b, [])):
-                        continue
-                    if abs(pa["w"] - pb["w"]) <= max(SHARE_ABS_W, SHARE_REL * max(pa["w"], pb["w"])):
-                        pair = {"sent": pa["w"], "recv": pb["w"]}
-                        out.setdefault(a, []).append({"key": pa["key"], "dir": "out", "w": pa["w"], "peer": b, **pair})
-                        out.setdefault(b, []).append({"key": pb["key"], "dir": "in", "w": pb["w"], "peer": a, **pair})
+                outs = [p for p in va.get("ports") or [] if p["dir"] == "out" and p["key"].startswith("usb_c")
+                        and p["w"] >= SHARE_MIN_W and not used(a, p["key"])]
+                # 受け側の USB 入力は全ポートの合計しか分からないので、2〜3 本のケーブルで送っていると
+                # 1 本ずつの比較では合わない (C2000 の USB-C1 100W + USB-C2 60W → C300 DC の USB 入力 150W)。
+                # 1 本で合うものを先に探し、なければ本数を増やす
+                for n in range(1, min(3, len(outs)) + 1):
+                    match = next(((a, c, sum(p["w"] for p in c)) for c in itertools.combinations(outs, n)
+                                  if close(sum(p["w"] for p in c), pb["w"])), None)
+                    if match:
                         break
+                if match:
+                    break
+            if not match:
+                continue
+            a, combo, sent = match
+            left = pb["w"]
+            for i, p in enumerate(combo):  # 受け取った量を、送ったポートの W の比で分ける (合計が受け取りと一致するように)
+                recv = left if i == len(combo) - 1 else round(pb["w"] * p["w"] / sent)
+                left -= recv
+                out.setdefault(a, []).append({"key": p["key"], "dir": "out", "w": p["w"], "peer": b,
+                                              "sent": p["w"], "recv": recv})
+            out.setdefault(b, []).append({"key": pb["key"], "dir": "in", "w": pb["w"], "peer": a,
+                                          "sent": sent, "recv": pb["w"]})
     return out
 
 
@@ -1856,6 +1948,12 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                     mgr.db.refresh_savings(3)  # 直近 3 日は、いつでも最新にしてから返す
                     self._json({"rows": mgr.db.savings_rows(t0, t1, q.get("dev") or None), "settings": load_settings(),
                                 "tz_offset": time.localtime().tm_gmtoff or 0})
+                elif u.path == "/api/raw":  # 解析用 (amon get): 間引かない log と、日ごとの集計
+                    t0, t1 = span(q if "from" in q else {**q, "hours": float(q.get("hours", 24))})
+                    out = mgr.db.raw(q.get("dev") or None, t0, t1, min(int(q.get("limit", 20000)), 200000))
+                    out.update({"from": t0, "to": t1, "tz_offset": time.localtime().tm_gmtoff or 0,
+                                "daily": mgr.db.savings_rows(t0, t1, q.get("dev") or None)})
+                    self._json(out)
                 elif u.path == "/api/settings":
                     self._json(load_settings())
                 elif u.path == "/api/history-devices":
@@ -1969,7 +2067,7 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
 
 
 LAN_READ_PATHS = {"/", "/index.html", "/history", "/status", "/ports", "/summary", "/api/daily", "/api/history",
-                  "/api/history-devices", "/api/storage", "/api/settings", "/favicon.ico"}
+                  "/api/history-devices", "/api/storage", "/api/settings", "/api/raw", "/favicon.ico"}
 
 
 # ───────────────────────── 起動 ─────────────────────────

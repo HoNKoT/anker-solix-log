@@ -124,6 +124,7 @@ Bluetooth は Mac の近くでしか読めません。Wi-Fi につながった�
 ./amon demo          # ダミー機器・ダミー履歴で画面確認 (先に ./amon stop)
 ./amon token new     # このMac以外から読むときのトークンを作る (amon token で表示 / off でやめる)
 ./amon remote <URL> <トークン>   # (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
+./amon get '/api/raw?hours=48'   # API を読んで JSON を出す。リモート表示中なら記録している Mac からトークン付きで (解析用)
 ```
 
 ## うまくいかないとき
@@ -293,6 +294,7 @@ git clone https://github.com/HoNKoT/anker-solix-log.git && cd anker-solix-log
 ```
 
 - 見る側でコードを更新したら (`git pull`)、`amon deploy` でアプリを作り直します (リモート表示のときはアプリだけ作ります)。
+- `amon get <パス>` は、記録している Mac の API を JSON のまま読みます (トークンは remote.json から読み、画面にもコマンドの引数にも出しません)。解析用の `/api/raw` は、間引いていない log の全列 (ポート別・Transfer・ロス) と日ごとの集計を返します。`dev=<機器ID>`、`from`/`to` (UNIX 秒) または `hours`、`limit` (既定 20000 行) で絞れます。Claude Code などに `amon get '/api/raw?hours=24'` を実行させれば、機器の記録を読んで調べてもらえます。
 - 見る側に Python や部品は要りません (`amon remote` はアプリだけビルドします。Xcode Command Line Tools は必要です)。設定は `~/.anker-monitor/remote.json` (0600) に入ります。
 - 見る側のメニューには「機器を追加…」「バックエンドを再起動」は出ません (機器の登録・削除・設定変更は、記録している Mac からだけ)。
 - 残量 10% 未満の通知は、見る側の Mac でも出ます。
