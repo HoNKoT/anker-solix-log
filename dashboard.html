@@ -96,15 +96,27 @@ details.gfold[open]>summary::before{content:''}
 details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .dtab{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:calc(12px*var(--fs,1))}
 .dtab th{color:var(--sub);font-weight:600;text-align:right;padding:4px 4px;font-size:calc(10px*var(--fs,1))}
-.dtab td{text-align:right;padding:5px 4px;border-top:1px solid var(--line)}
+.dtab td{text-align:right;padding:5px 3px;border-top:1px solid var(--line)}
 .dtab th:first-child,.dtab td:first-child{text-align:left}
 .dtab td.in{color:var(--in)}.dtab td.out{color:var(--out)}
-.dtab td.xf{color:#14b8a6}.dtab td.xf small{color:var(--sub);font-size:.85em}
+.dtab td.xf{color:#14b8a6}.dtab td.xf small{display:block;color:var(--sub);font-size:.85em}
 .dtab tr.wk td:first-child{color:var(--sub)}
+.mblk{border-top:1px solid var(--line);padding:8px 0 4px}.mblk:first-child{border-top:0}
+.mhead{cursor:pointer;border-radius:8px}.mhead:hover{background:var(--soft)}.mblk.empty .mhead{cursor:default;background:none}
+.mhead>b{font-size:calc(14px*var(--fs,1))}.mhead>.sub{margin-left:8px;font-size:calc(11px*var(--fs,1))}
+.mblk .tw{display:inline-block;width:1.1em;color:var(--sub);transition:transform .15s}.mblk.open .tw{transform:rotate(90deg)}.mblk.empty .tw{visibility:hidden}
+.mblk .dbig{margin:4px 0 6px 1.1em;gap:4px 16px}.mblk .dbig b{font-size:calc(16px*var(--fs,1))}.mblk .dtab{margin-bottom:6px}
+#d-more{margin:4px 0 8px}
+.dtab th{white-space:nowrap;vertical-align:bottom}.dtab .hu{display:none}.dtab.hdru .hu{display:block;margin:0}.dtab.hdru .cu{display:none}
+.loadbar{height:3px;margin:-6px 0 6px;border-radius:2px;overflow:hidden;visibility:hidden}.loadbar.on{visibility:visible}
+.loadbar::before{content:'';display:block;height:100%;width:35%;background:var(--pct);animation:lb 1s ease-in-out infinite}
+@keyframes lb{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
 .dbig{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 10px}
 .dbig div{min-width:0}.dbig b{display:block;font-size:calc(19px*var(--fs,1));font-variant-numeric:tabular-nums}
 .dbig small{color:var(--sub);font-size:calc(10px*var(--fs,1))}
 .dbig .yen b{color:var(--in)}
+.u{font-size:.58em;font-weight:500;margin-left:1px}
+.dtab td{white-space:nowrap}
 .price{display:flex;align-items:center;gap:6px;font-size:calc(12px*var(--fs,1));color:var(--sub);margin-top:10px}
 .price input{width:70px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;padding:3px 6px;font:inherit;text-align:right}
 .main{display:none}
@@ -212,14 +224,15 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
     <div class="delbox" id="h-delbox" hidden></div>
   </div>
   <div class="card pad" id="d-card">
-    <div class="bar" style="justify-content:space-between"><b>日ごとの電力量</b><span class="bar"><button class="btn ghost sm" id="d-prev">◀</button><span class="sub" id="d-month"></span><button class="btn ghost sm" id="d-next">▶</button></span></div>
-    <div class="bar" style="margin-top:6px"><div class="seg" id="d-scope"></div></div>
-    <div class="dbig" id="d-big"></div>
-    <table class="dtab" id="d-tab"></table>
+    <div class="loadbar" id="d-load"></div>
+    <div class="bar" style="justify-content:space-between"><b>月ごとの電力量</b><div class="seg" id="d-scope"></div></div>
+    <div id="d-months"></div>
+    <button class="btn ghost sm" id="d-more" hidden></button>
     <div class="price">電気代の単価 <input id="d-price" type="number" step="0.1" min="0" inputmode="decimal"> 円 / kWh</div>
-    <div class="note" style="margin-top:6px">節約額 = ソーラーで賄えた出力 Wh × 単価。ソーラー入力をクレジットとして貯め、出力はソーラー分から先に消化します (AC入力が混じっていても同じ)。待機・変換ロス (入力 − 出力 − 電池の増減) はクレジットから引きます。1日は、このMacの時刻の0時〜24時。</div>
+    <div class="note" style="margin-top:6px">節約額 = ソーラーで賄えた出力 kWh × 単価。ソーラー入力は貯め続け、出力 (Transfer は含まない) はその貯めから使います。貯めが尽きたあとの出力は節約に数えません。全機器では全機器の合計で数えます (ソーラーが入る機器と出力する機器が違ってもよい)。使い切れなかったソーラー分は翌日以降に持ち越し、雨の日の出力にも使います。1日は、このMacの時刻の0時〜24時。</div>
   </div>
   <div class="card pad">
+    <div class="loadbar" id="h-load"></div>
     <div class="bar" id="h-devs"></div>
     <div class="bar">
       <button class="btn ghost sm" id="h-prev">◀</button>
@@ -638,44 +651,86 @@ function histWindow(){
   return [t0,t1];
 }
 const DOW='日月火水木金土';
-function monthRange(off){const n=new Date();const a=new Date(n.getFullYear(),n.getMonth()+off,1),b=new Date(n.getFullYear(),n.getMonth()+off+1,1);return [a,b]}
 const yen=v=>Math.round(v).toLocaleString('ja-JP')+' 円';
+// 日ごとの電力量は桁をそろえて比べやすいように kWh 固定。単位は小さくして数値と同じベースラインに置く
+const kwh=v=>(v/1000).toFixed(2)+' kWh';
+const kv=v=>(v/1000).toFixed(2);
+const kwhU=v=>(v/1000).toFixed(2)+'<span class="u">kWh</span>';
+const yenU=v=>Math.round(v).toLocaleString('ja-JP')+'<span class="u">円</span>';
+// 読み込み中バー: 0.2 秒以上かかったときだけ出す (15 秒ごとの再読み込みで毎回点滅しないように)
+async function loading(id,p){const b=$(id);const t=setTimeout(()=>b.classList.add('on'),200);
+  try{return await p}finally{clearTimeout(t);b.classList.remove('on')}}
 async function loadDaily(){
-  const D=S.daily||(S.daily={off:0,scope:'all',price:39.5});
-  const [a,b]=monthRange(D.off);
-  $('d-month').textContent=a.getFullYear()+'年'+(a.getMonth()+1)+'月';
-  $('d-next').disabled=D.off>=0;
+  const D=S.daily||(S.daily={shown:3,scope:'all',price:39.5,open:new Set()});
   seg($('d-scope'),[['all','全機器'],['one','この機器']],D.scope,k=>{D.scope=k;loadDaily()});
-  let r;try{r=await api('/api/daily?from='+Math.floor(a/1000)+'&to='+Math.floor(b/1000)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):''))}catch(e){return}
+  // ソーラーの貯めは記録の最初から積み上げるので、全期間をもらう (月別の表にも全期間を使う)
+  let r;try{r=await loading('d-load',api('/api/daily?from=0&to='+Math.floor(Date.now()/1000)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):'')))}catch(e){return}
   D.price=r.settings.price_per_kwh;const pi=$('d-price');if(document.activeElement!==pi)pi.value=D.price;
-  const days=new Map();
+  D.rows=r.rows;renderDaily();
+}
+// 月の切り替え・月の開閉は、取ってある全期間の行から描き直すだけ
+function renderDaily(){
+  const D=S.daily;if(!D.rows)return;
+  const all=new Map();
   const z=()=>({wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0,wh_xfer_in:0,wh_xfer_out:0,wh_xfer_loss_in:0,wh_xfer_loss_out:0});
-  for(const x of r.rows){const m=days.get(x.day)||z();for(const k of Object.keys(m))m[k]+=x[k]||0;days.set(x.day,m)}
-  const tot=z();for(const m of days.values())for(const k of Object.keys(tot))tot[k]+=m[k];
+  for(const x of D.rows){const m=all.get(x.day)||z();for(const k of Object.keys(m))m[k]+=x[k]||0;all.set(x.day,m)}
+  // 節約: ソーラー入力を対象の機器全体で貯め続け、出力 (Transfer は含まない) はその貯めから使えた分だけ節約とする。
+  // 機器ごとに貯めると、ソーラーが入る機器 (C2000) と出力する機器 (C300 DC) が違うとき節約がほぼ 0 になる。
+  // 日の中の時刻順は見ない (その日のソーラーは、その日の出力より先に入ったとみなす)
+  let credit=0;
+  for(const day of [...all.keys()].sort()){const m=all.get(day);credit+=m.wh_solar;m.wh_saved=Math.min(m.wh_out,credit);credit-=m.wh_saved}
   // Transfer: 全機器では送り側と受け側に同じ量が入っているので片側だけ数える (送り側の記録が無ければ受け側)。
   // 1台なら、その機器の受け取り + 送り出し
   const xf=m=>D.scope==='all'?(m.wh_xfer_out>0?{t:m.wh_xfer_out,l:m.wh_xfer_loss_out}:{t:m.wh_xfer_in,l:m.wh_xfer_loss_in})
     :{t:m.wh_xfer_in+m.wh_xfer_out,l:m.wh_xfer_loss_in+m.wh_xfer_loss_out};
-  const xfTxt=x=>fWh(x.t)+(x.l>=0.05?'<small> ('+fWh(x.l)+' loss)</small>':'');
-  // 月の合計は日ごとの値を足す (日によって送り側の記録だけ欠けていても、表の合計と合うように)
-  const xt={t:0,l:0};for(const m of days.values()){const x=xf(m);xt.t+=x.t;xt.l+=x.l}const hasX=xt.t>=0.05;
+  // 月の値は日ごとの値を足す (日によって送り側の記録だけ欠けていても、日の行の合計と合うように)
+  const months=new Map();
+  for(const [day,m] of all){const k=day.slice(0,7);const s=months.get(k)||{...z(),xt:0,xl:0,days:[]};
+    for(const f of Object.keys(m))s[f]+=m[f];const x=xf(m);s.xt+=x.t;s.xl+=x.l;s.days.push(day);months.set(k,s)}
+  // 今月から、記録のある最も古い月までを並べる (途中の記録のない月も 1 行出す)
+  const ym=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const oldest=[...months.keys()].sort()[0];const keys=[];
+  for(let d=new Date(new Date().getFullYear(),new Date().getMonth(),1);;d.setMonth(d.getMonth()-1)){keys.push(ym(d));if(!oldest||ym(d)<=oldest)break}
   const rate=D.price/1000;
-  $('d-big').innerHTML=`<div class="yen"><b>${yen(tot.wh_saved*rate)}</b><small>今月の節約 (ソーラーで賄えた ${fWh(tot.wh_saved)})</small></div>
-    <div><b>${fWh(tot.wh_in)}</b><small>入力 (うちソーラー ${fWh(tot.wh_solar)})</small></div><div><b>${fWh(tot.wh_out)}</b><small>出力 (≒ ${yen(tot.wh_out*rate)})</small></div>`
-    +(hasX?`<div><b>${fWh(xt.t)}</b><small>Transfer${xt.l>=0.05?' ('+fWh(xt.l)+' loss)':''} · 入出力には含めない</small></div>`:'')
-    +`<div><b>${fWh(tot.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`;
-  const t=$('d-tab');t.replaceChildren();
-  t.innerHTML='<tr><th>日</th><th>入力</th><th>出力</th>'+(hasX?'<th>Transfer</th>':'')+'<th>ソーラー</th><th>節約</th></tr>';
-  for(const day of [...days.keys()].sort().reverse()){const m=days.get(day);const dt=new Date(day+'T00:00:00');
-    const tr=el('tr',dt.getDay()===0||dt.getDay()===6?'wk':'');
-    tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})</td><td class="in">${fWh(m.wh_in)}</td><td class="out">${fWh(m.wh_out)}</td>`
-      +(hasX?`<td class="xf">${xfTxt(xf(m))}</td>`:'')+`<td>${fWh(m.wh_solar)}</td><td>${yen(m.wh_saved*rate)}</td>`;t.append(tr)}
-  if(!days.size){const tr=el('tr');tr.innerHTML='<td colspan="5" style="color:var(--sub)">この月の記録はありません</td>';t.append(tr)}
+  // 単位は .cu (数値の横) と .hu (見出し) の両方を出しておき、fitDailyUnits() で幅に合わせてどちらかを隠す
+  const Uc='<span class="u cu">kWh</span>',Uh='<span class="u hu">kWh</span>';
+  const n=v=>kv(v)+Uc;
+  // ロスは数 Wh のことが多く、小数 2 桁の kWh だと 0.00 になるので 3 桁で出す
+  const xfTxt=(t,l)=>n(t)+(l>=0.5?'<small>('+(l/1000).toFixed(3)+' loss)</small>':'');
+  const box=$('d-months');box.replaceChildren();
+  for(const k of keys.slice(0,D.shown)){const s=months.get(k);const open=D.open.has(k)&&!!s;const [y,mo]=k.split('-');
+    const blk=el('div','mblk'+(open?' open':'')+(s?'':' empty'));
+    const head=el('div','mhead');head.innerHTML=`<span class="tw">▸</span><b>${y}年${+mo}月</b>`;
+    if(!s){head.innerHTML+=`<span class="sub">記録はありません</span>`;blk.append(head);box.append(blk);continue}
+    head.onclick=()=>{D.open.has(k)?D.open.delete(k):D.open.add(k);renderDaily()};
+    const big=el('div','dbig');const hasX=s.xt>=0.05;
+    big.innerHTML=`<div class="yen"><b>${yenU(s.wh_saved*rate)}</b><small>節約 (ソーラーで賄えた ${kwh(s.wh_saved)})</small></div>
+      <div><b>${kwhU(s.wh_in)}</b><small>入力 (うちソーラー ${kwh(s.wh_solar)})</small></div><div><b>${kwhU(s.wh_out)}</b><small>出力 (≒ ${yen(s.wh_out*rate)})</small></div>`
+      +(hasX?`<div><b>${kwhU(s.xt)}</b><small>Transfer${s.xl>=0.05?' ('+kwh(s.xl)+' loss)':''} · 入出力には含めない</small></div>`:'')
+      +`<div><b>${kwhU(s.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`;
+    head.append(big);blk.append(head);
+    if(open){const t=el('table','dtab');
+      t.innerHTML=`<tr><th>日</th><th>入力${Uh}</th><th>出力${Uh}</th>`+(hasX?`<th>Transfer${Uh}</th>`:'')+`<th>ソーラー${Uh}</th><th>節約</th></tr>`;
+      for(const day of s.days.sort().reverse()){const m=all.get(day);const dt=new Date(day+'T00:00:00');const x=xf(m);
+        const tr=el('tr',dt.getDay()===0||dt.getDay()===6?'wk':'');
+        tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})</td><td class="in">${n(m.wh_in)}</td><td class="out">${n(m.wh_out)}</td>`
+          +(hasX?`<td class="xf">${xfTxt(x.t,x.l)}</td>`:'')+`<td>${n(m.wh_solar)}</td><td>${yenU(m.wh_saved*rate)}</td>`;t.append(tr)}
+      blk.append(t)}
+    box.append(blk)}
+  const rest=keys.length-D.shown,more=$('d-more');more.hidden=rest<=0;
+  more.textContent=`さらに前の月を表示 (あと ${rest} か月)`;
+  fitDailyUnits();
 }
+// 数値の横に単位を付けると表がはみ出す (数値と単位が 2 行に分かれる幅) ときだけ、単位を見出しに移す
+function fitDailyUnits(){for(const t of document.querySelectorAll('#d-months .dtab')){const w=t.parentElement.clientWidth;if(!w)continue;
+  t.classList.remove('hdru');if(t.scrollWidth>w)t.classList.add('hdru')}}
 function initDailyUI(){
-  $('d-prev').onclick=()=>{S.daily.off--;loadDaily()};$('d-next').onclick=()=>{if(S.daily.off<0){S.daily.off++;loadDaily()}};
+  $('d-more').onclick=()=>{S.daily.shown+=3;renderDaily()};
   const pi=$('d-price');pi.onchange=async()=>{const v=parseFloat(pi.value);if(!(v>=0))return;
     try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price_per_kwh:v})})}catch(e){}loadDaily()};
+  addEventListener('resize',fitDailyUnits);
+  // 履歴タブが隠れている間は幅が 0 で測れないので、見えるようになったら測り直す
+  new ResizeObserver(fitDailyUnits).observe($('d-card'));
 }
 async function initHistory(){
   const h=S.hist;
@@ -683,7 +738,7 @@ async function initHistory(){
     const map=new Map();for(const d of known)map.set(d.id,{id:d.id,name:d.name});for(const d of live)map.set(d.id,{id:d.id,name:d.name});
     h.devices=[...map.values()]}catch(e){h.devices=[]}
   if(!h.dev||!h.devices.find(d=>d.id===h.dev))h.dev=h.devices[0]?.id||null;
-  if(!S.daily)S.daily={off:0,scope:'all',price:39.5};if(!initHistory.done){initHistory.done=1;initDailyUI()}
+  if(!S.daily)S.daily={shown:3,scope:'all',price:39.5,open:new Set()};if(!initHistory.done){initHistory.done=1;initDailyUI()}
   renderHistControls();loadHistory();loadStorage();loadDaily();
 }
 function renderHistControls(){
@@ -700,7 +755,7 @@ async function loadHistory(){
   const [t0,t1]=histWindow();h.t0=t0;h.t1=t1;
   $('h-span').textContent=new Date(t0*1000).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})+' 〜 '+new Date(t1*1000).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
   const q=`dev=${encodeURIComponent(h.dev)}&from=${t0}&to=${t1}`;
-  try{const [hh,pp,ss]=await Promise.all([api('/api/history?'+q),api('/ports?'+q),api('/summary?'+q)]);
+  try{const [hh,pp,ss]=await loading('h-load',Promise.all([api('/api/history?'+q),api('/ports?'+q),api('/summary?'+q)]));
     h.rows=hh.rows;h.bucket=hh.bucket;h.ports=pp;h.summary=ss;}catch(e){h.rows=[];h.ports=null;h.summary={samples:0}}
   drawHist();renderHistLegend();renderSummary();renderPortTable();
 }
