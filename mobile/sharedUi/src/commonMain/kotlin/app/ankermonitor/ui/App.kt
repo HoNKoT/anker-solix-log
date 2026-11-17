@@ -33,7 +33,17 @@ fun App(viewModel: MainViewModel) {
             )
         } else {
             val state by viewModel.monitor.collectAsStateWithLifecycle()
-            MonitorScreen(connection = c.connection, state = state, onOpenSettings = { editing = true })
+            val hourly by viewModel.hourly.collectAsStateWithLifecycle()
+            val energy by viewModel.energy.collectAsStateWithLifecycle()
+            MonitorScreen(
+                connection = c.connection,
+                state = state,
+                onOpenSettings = { editing = true },
+                hourly = hourly,
+                onToggleWeather = viewModel::toggleHourly,
+                energy = energy,
+                onLoadEnergy = viewModel::loadEnergy,
+            )
         }
     }
 }

@@ -13,6 +13,8 @@ data class StatusResponse(
     /** バックエンドの時刻 (UNIX 秒、小数あり) */
     val now: Double? = null,
     val devices: List<Device> = emptyList(),
+    /** 天気の場所が未設定なら null (anker_monitor.py の weather_now) */
+    val weather: WeatherNow? = null,
 )
 
 @Serializable
@@ -47,6 +49,9 @@ data class Share(
     val w: Double = 0.0,
     val peer: String,
     @SerialName("peer_name") val peerName: String? = null,
+    /** 送り側が出した W と、受け側が受け取った W (find_sharing)。古いバックエンドには無いので w で代える */
+    val sent: Double? = null,
+    val recv: Double? = null,
 )
 
 @Serializable
@@ -56,4 +61,6 @@ data class Port(
     /** in / out */
     val dir: String,
     val w: Double = 0.0,
+    /** 機器どうしの給電に使っているポート (net_of_sharing の印) */
+    val shared: Boolean = false,
 )

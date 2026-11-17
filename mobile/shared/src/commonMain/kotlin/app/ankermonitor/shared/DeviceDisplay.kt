@@ -58,3 +58,29 @@ val PowerFlow.label: String
         PowerFlow.IDLE -> "待機"
         PowerFlow.UNKNOWN -> "--"
     }
+
+/**
+ * 機器どうしの給電 (Transfer) の W。履歴と同じく「相手が受け取った W」(recv) で数える
+ * (98W 送って 92W 届いたなら、送り側も受け側も Transfer 92W)。入力・出力の W には含まれていない。
+ */
+val Device.transferWatts: Int
+    get() = shared.orEmpty().sumOf { it.recv ?: it.w }.roundToInt()
+
+/** 送り側のロス: 送った W − 相手が受け取った W (受け側では 0)。測定誤差で受け取りが多いときは 0 */
+val Device.transferLossWatts: Int
+    get() = shared.orEmpty().filter { it.dir == "out" }
+        .sumOf { maxOf(0.0, (it.sent ?: it.w) - (it.recv ?: it.w)) }.roundToInt()
+
+/** カードに出す Transfer の行。給電していなければ null。例: 「Transfer 送り出し 92 W (6 W loss)」 */
+val Device.transferLabel: String?
+    get() {
+        val shares = shared.orEmpty()
+        if (shares.isEmpty()) return null
+        val dir = when {
+            shares.all { it.dir == "out" } -> "送り出し "
+            shares.all { it.dir == "in" } -> "受け取り "
+            else -> ""
+        }
+        val loss = transferLossWatts
+        return "Transfer $dir$transferWatts W" + if (loss >= 1) " ($loss W loss)" else ""
+    }
