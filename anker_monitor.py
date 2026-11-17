@@ -269,6 +269,8 @@ class Registry:
 # 内訳の列 (log テーブルの列名 = ポートのキー)。列を足すときはここに足す (既存の DB には自動で ALTER)
 PORT_COLS = [key for _a, key, _l, _d in PORT_PROPS] + ["in_usb", "xfer_in", "xfer_out", "xfer_loss", "other_in", "other_out"]
 CHG_CODE = {"IDLE": 0, "CHARGING": 1, "DISCHARGING": 2}
+# 節電記録 (savings) の Transfer の列。ロスは送り側の行 / 受け側の行のぶんを分けて持つ
+SAVINGS_XFER_COLS = ["wh_xfer_in", "wh_xfer_out", "wh_xfer_loss_in", "wh_xfer_loss_out"]
 SCHEMA_VERSION = 2
 
 
@@ -308,6 +310,10 @@ class HistoryDB:
         # 節電記録: 日ごと・機器ごと。log を間引いたり消したりしても残る (電力量 Wh と、ソーラーで賄えた分)
         self.db.execute("CREATE TABLE IF NOT EXISTS savings(dev INTEGER, day TEXT, wh_in REAL, wh_out REAL, wh_solar REAL, "
                         "wh_ac REAL, wh_saved REAL, wh_loss REAL, hours REAL, updated INTEGER, PRIMARY KEY(dev, day)) WITHOUT ROWID")
+        have_s = {r[1] for r in self.db.execute("PRAGMA table_info(savings)")}
+        for c in SAVINGS_XFER_COLS:
+            if c not in have_s:
+                self.db.execute(f"ALTER TABLE savings ADD COLUMN {c} REAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS log_columns(col TEXT PRIMARY KEY, label TEXT, dir TEXT, unit TEXT, note TEXT)")
         rows = [("ts", "時刻", None, "UNIX秒", ""), ("dev", "機器 (devices.id)", None, "", ""),
                 ("pct", "残量", None, "%", ""), ("pin", "入力 合計", "in", "W", "0W のときは NULL (記録しない)"),
@@ -531,7 +537,8 @@ class HistoryDB:
             devs = self.db.execute("SELECT id, dev, COALESCE(model,'') FROM devices").fetchall()
         if dev:
             devs = [d for d in devs if d[1] == dev]
-        cols = "ts, pct, COALESCE(pin,0), pout, COALESCE(solar,0)"
+        cols = ("ts, pct, COALESCE(pin,0), pout, COALESCE(solar,0), "
+                "COALESCE(xfer_in,0), COALESCE(xfer_out,0), COALESCE(xfer_loss,0)")
         out: list[dict] = []
         for did, dname, model in devs:
             cap = MODEL_WH.get(model, 0)
@@ -542,6 +549,7 @@ class HistoryDB:
             for prev, cur in zip(rows, rows[1:]):
                 d = (prev[0] + off) // 86400
                 m = days.setdefault(d, {"in": 0.0, "out": 0.0, "solar": 0.0, "ac": 0.0, "hours": 0.0,
+                                        "x_in": 0.0, "x_out": 0.0, "xl_in": 0.0, "xl_out": 0.0,
                                         "p0": prev[1], "p1": cur[1], "pmin": prev[1], "pmax": prev[1], "rows": []})
                 dt = min(cur[0] - prev[0], GAP_CAP)
                 k = dt / 3600
@@ -551,6 +559,11 @@ class HistoryDB:
                 m["solar"] += sol * k
                 m["ac"] += max(0, prev[2] - sol) * k
                 m["hours"] += k
+                # ロスは送り側・受け側の両方の行に入っているので、行の向きで分けておく
+                # (全機器の合計で、同じロスを 2 回数えないように)
+                m["x_in"] += prev[5] * k
+                m["x_out"] += prev[6] * k
+                m["xl_out" if prev[6] else "xl_in"] += prev[7] * k
                 m["p1"] = cur[1]
                 m["pmin"], m["pmax"] = min(m["pmin"], cur[1]), max(m["pmax"], cur[1])
                 m["rows"].append((sol, prev[3], k, prev[1]))
@@ -559,7 +572,10 @@ class HistoryDB:
                 m = days[d]
                 # この日の待機・変換ロス (W): 入力 − 出力 − 電池の増減。電池容量が分からない機種は 0 とする
                 d_e = (m["p1"] - m["p0"]) / 100 * cap
-                loss = max(0.0, m["in"] - m["out"] - d_e) if cap else 0.0
+                # 給電ぶんは入力・出力から引いてあるが、電池の増減には入っているので戻す
+                # (送り側は相手に届いた分 + 途中のロスだけ電池が減る)。戻さないと、送ったぶんが待機ロスに見える
+                bat_in, bat_out = m["in"] + m["x_in"], m["out"] + m["x_out"] + m["xl_out"]
+                loss = max(0.0, bat_in - bat_out - d_e) if cap else 0.0
                 loss_w = loss / m["hours"] if m["hours"] else 0.0
                 saved = 0.0
                 for sol, po, k, pct in m["rows"]:
@@ -575,6 +591,8 @@ class HistoryDB:
                                 "wh_in": round(m["in"], 1), "wh_out": round(m["out"], 1),
                                 "wh_solar": round(m["solar"], 1), "wh_ac": round(m["ac"], 1),
                                 "wh_saved": round(saved, 1), "wh_loss": round(loss, 1),
+                                "wh_xfer_in": round(m["x_in"], 1), "wh_xfer_out": round(m["x_out"], 1),
+                                "wh_xfer_loss_in": round(m["xl_in"], 1), "wh_xfer_loss_out": round(m["xl_out"], 1),
                                 "pct_min": m["pmin"], "pct_max": m["pmax"], "hours": round(m["hours"], 1)})
         return sorted(out, key=lambda r: r["day"])
 
@@ -593,12 +611,21 @@ class HistoryDB:
         cutoff = time.strftime("%Y-%m-%d", time.gmtime(now + off - RAW_KEEP_DAYS * 86400))
         with self.lock:
             ids = {d: i for d, i in self.db.execute("SELECT dev, id FROM devices")}
+            names = "dev,day,wh_in,wh_out,wh_solar,wh_ac,wh_saved,wh_loss,hours,updated," + ",".join(SAVINGS_XFER_COLS)
+            marks = ",".join("?" * (10 + len(SAVINGS_XFER_COLS)))
             for verb, part in (("REPLACE", [r for r in rows if r["day"] >= cutoff]),
                                ("IGNORE", [r for r in rows if r["day"] < cutoff])):
                 self.db.executemany(
-                    f"INSERT OR {verb} INTO savings VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    f"INSERT OR {verb} INTO savings({names}) VALUES({marks})",
                     [(ids[r["dev"]], r["day"], r["wh_in"], r["wh_out"], r["wh_solar"], r["wh_ac"], r["wh_saved"],
-                      r["wh_loss"], r["hours"], int(now)) for r in part if r["dev"] in ids])
+                      r["wh_loss"], r["hours"], int(now), *[r[c] for c in SAVINGS_XFER_COLS])
+                     for r in part if r["dev"] in ids])
+            # 確定済みの日も、Transfer の列を足す前に書いた行 (NULL) だけは埋める (ほかの列は上書きしない)
+            sets = ",".join(f"{c}=?" for c in SAVINGS_XFER_COLS)
+            self.db.executemany(
+                f"UPDATE savings SET {sets} WHERE dev=? AND day=? AND {SAVINGS_XFER_COLS[0]} IS NULL",
+                [(*[r[c] for c in SAVINGS_XFER_COLS], ids[r["dev"]], r["day"])
+                 for r in rows if r["day"] < cutoff and r["dev"] in ids])
             self.db.commit()
         return len(rows)
 
@@ -614,8 +641,9 @@ class HistoryDB:
         off = time.localtime().tm_gmtoff or 0
         d0 = time.strftime("%Y-%m-%d", time.gmtime(t0 + off))
         d1 = time.strftime("%Y-%m-%d", time.gmtime(t1 + off))
-        q = ("SELECT d.dev, s.day, s.wh_in, s.wh_out, s.wh_solar, s.wh_ac, s.wh_saved, s.wh_loss, s.hours "
-             "FROM savings s JOIN devices d ON d.id=s.dev WHERE s.day>=? AND s.day<?")
+        xs = "".join(f", COALESCE(s.{c},0)" for c in SAVINGS_XFER_COLS)
+        q = ("SELECT d.dev, s.day, s.wh_in, s.wh_out, s.wh_solar, s.wh_ac, s.wh_saved, s.wh_loss, s.hours" + xs +
+             " FROM savings s JOIN devices d ON d.id=s.dev WHERE s.day>=? AND s.day<?")
         args: list = [d0, d1]
         if dev:
             q += " AND d.dev=?"
@@ -623,7 +651,7 @@ class HistoryDB:
         with self.lock:
             rs = self.db.execute(q + " ORDER BY s.day", args).fetchall()
         return [{"dev": r[0], "day": r[1], "wh_in": r[2], "wh_out": r[3], "wh_solar": r[4], "wh_ac": r[5],
-                 "wh_saved": r[6], "wh_loss": r[7], "hours": r[8]} for r in rs]
+                 "wh_saved": r[6], "wh_loss": r[7], "hours": r[8], **dict(zip(SAVINGS_XFER_COLS, r[9:]))} for r in rs]
 
     def compact(self, interval: int, before: int | None = None) -> dict:
         """すでにある履歴を interval 秒ごとの平均に間引く (before より古い行だけ。None なら全部)。

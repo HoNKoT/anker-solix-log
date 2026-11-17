@@ -99,6 +99,7 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .dtab td{text-align:right;padding:5px 4px;border-top:1px solid var(--line)}
 .dtab th:first-child,.dtab td:first-child{text-align:left}
 .dtab td.in{color:var(--in)}.dtab td.out{color:var(--out)}
+.dtab td.xf{color:#14b8a6}.dtab td.xf small{color:var(--sub);font-size:.85em}
 .dtab tr.wk td:first-child{color:var(--sub)}
 .dbig{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 10px}
 .dbig div{min-width:0}.dbig b{display:block;font-size:calc(19px*var(--fs,1));font-variant-numeric:tabular-nums}
@@ -648,16 +649,27 @@ async function loadDaily(){
   let r;try{r=await api('/api/daily?from='+Math.floor(a/1000)+'&to='+Math.floor(b/1000)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):''))}catch(e){return}
   D.price=r.settings.price_per_kwh;const pi=$('d-price');if(document.activeElement!==pi)pi.value=D.price;
   const days=new Map();
-  for(const x of r.rows){const m=days.get(x.day)||{wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0};for(const k of Object.keys(m))m[k]+=x[k];days.set(x.day,m)}
-  const tot={wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0};for(const m of days.values())for(const k of Object.keys(tot))tot[k]+=m[k];
+  const z=()=>({wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0,wh_xfer_in:0,wh_xfer_out:0,wh_xfer_loss_in:0,wh_xfer_loss_out:0});
+  for(const x of r.rows){const m=days.get(x.day)||z();for(const k of Object.keys(m))m[k]+=x[k]||0;days.set(x.day,m)}
+  const tot=z();for(const m of days.values())for(const k of Object.keys(tot))tot[k]+=m[k];
+  // Transfer: 全機器では送り側と受け側に同じ量が入っているので片側だけ数える (送り側の記録が無ければ受け側)。
+  // 1台なら、その機器の受け取り + 送り出し
+  const xf=m=>D.scope==='all'?(m.wh_xfer_out>0?{t:m.wh_xfer_out,l:m.wh_xfer_loss_out}:{t:m.wh_xfer_in,l:m.wh_xfer_loss_in})
+    :{t:m.wh_xfer_in+m.wh_xfer_out,l:m.wh_xfer_loss_in+m.wh_xfer_loss_out};
+  const xfTxt=x=>fWh(x.t)+(x.l>=0.05?'<small> ('+fWh(x.l)+' loss)</small>':'');
+  // 月の合計は日ごとの値を足す (日によって送り側の記録だけ欠けていても、表の合計と合うように)
+  const xt={t:0,l:0};for(const m of days.values()){const x=xf(m);xt.t+=x.t;xt.l+=x.l}const hasX=xt.t>=0.05;
   const rate=D.price/1000;
   $('d-big').innerHTML=`<div class="yen"><b>${yen(tot.wh_saved*rate)}</b><small>今月の節約 (ソーラーで賄えた ${fWh(tot.wh_saved)})</small></div>
-    <div><b>${fWh(tot.wh_in)}</b><small>入力 (うちソーラー ${fWh(tot.wh_solar)})</small></div><div><b>${fWh(tot.wh_out)}</b><small>出力 (≒ ${yen(tot.wh_out*rate)})</small></div><div><b>${fWh(tot.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`;
+    <div><b>${fWh(tot.wh_in)}</b><small>入力 (うちソーラー ${fWh(tot.wh_solar)})</small></div><div><b>${fWh(tot.wh_out)}</b><small>出力 (≒ ${yen(tot.wh_out*rate)})</small></div>`
+    +(hasX?`<div><b>${fWh(xt.t)}</b><small>Transfer${xt.l>=0.05?' ('+fWh(xt.l)+' loss)':''} · 入出力には含めない</small></div>`:'')
+    +`<div><b>${fWh(tot.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`;
   const t=$('d-tab');t.replaceChildren();
-  t.innerHTML='<tr><th>日</th><th>入力</th><th>出力</th><th>ソーラー</th><th>節約</th></tr>';
+  t.innerHTML='<tr><th>日</th><th>入力</th><th>出力</th>'+(hasX?'<th>Transfer</th>':'')+'<th>ソーラー</th><th>節約</th></tr>';
   for(const day of [...days.keys()].sort().reverse()){const m=days.get(day);const dt=new Date(day+'T00:00:00');
     const tr=el('tr',dt.getDay()===0||dt.getDay()===6?'wk':'');
-    tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})</td><td class="in">${fWh(m.wh_in)}</td><td class="out">${fWh(m.wh_out)}</td><td>${fWh(m.wh_solar)}</td><td>${yen(m.wh_saved*rate)}</td>`;t.append(tr)}
+    tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})</td><td class="in">${fWh(m.wh_in)}</td><td class="out">${fWh(m.wh_out)}</td>`
+      +(hasX?`<td class="xf">${xfTxt(xf(m))}</td>`:'')+`<td>${fWh(m.wh_solar)}</td><td>${yen(m.wh_saved*rate)}</td>`;t.append(tr)}
   if(!days.size){const tr=el('tr');tr.innerHTML='<td colspan="5" style="color:var(--sub)">この月の記録はありません</td>';t.append(tr)}
 }
 function initDailyUI(){
