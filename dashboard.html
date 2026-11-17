@@ -24,6 +24,18 @@ h3{margin:0 0 8px;font-size:calc(12px*var(--fs,1));color:var(--sub);font-weight:
 .seg button{border:0;background:transparent;padding:3px 10px;border-radius:5px;font-size:calc(11px*var(--fs,1));color:var(--sub)}
 .seg button.on{background:var(--card);color:var(--fg);font-weight:600;box-shadow:0 1px 1px rgba(0,0,0,.1)}
 .sp{flex:1}
+.nwx{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.nwx .ic{font-size:calc(18px*var(--fs,1));line-height:1}.nwx b{font-size:calc(17px*var(--fs,1));line-height:1}
+.nwx small{color:var(--sub);font-size:calc(11px*var(--fs,1))}
+.nwx{cursor:pointer;border-radius:8px;padding:2px 6px}.nwx:hover{background:var(--soft)}.nwx.open{background:var(--soft)}
+.hwx{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x proximity;padding:2px 0 8px;margin:-4px 0 10px;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.hwx .hc{flex:0 0 auto;width:54px;scroll-snap-align:start;background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:6px 0;text-align:center;display:flex;flex-direction:column;gap:2px;font-variant-numeric:tabular-nums}
+.hwx .hc .h{color:var(--sub);font-size:calc(11px*var(--fs,1))}.hwx .hc .i{font-size:calc(20px*var(--fs,1))}
+.hwx .hc .tp{font-weight:600}.hwx .hc .pp{color:var(--pct);font-size:calc(10px*var(--fs,1));min-height:1.2em}
+.hwx .hc.past{opacity:.45}.hwx .hc.now{border-color:var(--pct);box-shadow:0 0 0 1px var(--pct) inset}.hwx .hc.now .h{color:var(--pct);font-weight:700}
+.hwx .hc.d0 .h::before{content:attr(data-d);display:block;font-size:.85em}
+.hwx .msg{color:var(--sub);font-size:calc(12px*var(--fs,1));padding:6px 2px}
 .btn{border:0;background:var(--pct);color:#fff;border-radius:7px;padding:5px 12px;font-weight:600}
 .btn.ghost{background:var(--line);color:var(--fg)}
 .btn.danger{background:var(--low)}
@@ -132,7 +144,7 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .info{border:0;background:transparent;color:var(--sub);font-size:calc(15px*var(--fs,1));padding:0 2px;cursor:pointer;margin-left:auto}
 .info+.chip{margin-left:0}
 .infotip{font-size:calc(11px*var(--fs,1));line-height:1.5;color:var(--sub);background:var(--line);border-radius:8px;padding:8px 10px;margin-top:8px}
-.remote [data-tab=devices],.remote .price,.remote #h-store,.remote .evt a.cp,.remote #h-note{display:none!important}
+.remote [data-tab=devices],.remote .price,.remote .wxres,.remote #h-store,.remote .evt a.cp,.remote #h-note{display:none!important}
 .evt{font-size:calc(10px*var(--fs,1));color:var(--sub);margin-top:6px;display:flex;gap:8px;align-items:center}
 .evt a.cp{color:var(--sub);cursor:pointer;font-size:calc(13px*var(--fs,1));text-decoration:none;padding:0 2px}
 .evt a.cp:hover{color:var(--fg)}
@@ -217,7 +229,10 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
 <section class="tab" id="tab-now" hidden>
   <div class="bar">
     <div class="seg" id="now-mode"></div>
+    <div class="sp"></div>
+    <div class="nwx" id="now-wx" hidden></div>
   </div>
+  <div class="hwx" id="now-hourly" hidden></div>
   <div id="cards"></div>
 </section>
 
@@ -235,7 +250,7 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
     <div class="price wxset">天気の場所 <span id="d-place"></span>
       <input id="d-place-q" type="search" placeholder="地名 (例: Yokohama, 横浜市)" enterkeyhint="search"><button class="btn ghost sm" id="d-place-go">探す</button></div>
     <div class="wxres" id="d-place-res"></div>
-    <div class="note" style="margin-top:6px">天気は設定した場所の Open-Meteo の値 (このMacから 3 時間ごとに取得)。節約額 = ソーラーで賄えた出力 kWh × 単価。ソーラー入力は貯め続け、出力 (Transfer は含まない) はその貯めから使います。貯めが尽きたあとの出力は節約に数えません。全機器では全機器の合計で数えます (ソーラーが入る機器と出力する機器が違ってもよい)。使い切れなかったソーラー分は翌日以降に持ち越し、雨の日の出力にも使います。1日は、このMacの時刻の0時〜24時。</div>
+    <div class="note" style="margin-top:6px">天気は設定した場所の Open-Meteo の値 (このMacから 30 分ごとに取得)。節約額 = ソーラーで賄えた出力 kWh × 単価。ソーラー入力は貯め続け、出力 (Transfer は含まない) はその貯めから使います。貯めが尽きたあとの出力は節約に数えません。全機器では全機器の合計で数えます (ソーラーが入る機器と出力する機器が違ってもよい)。使い切れなかったソーラー分は翌日以降に持ち越し、雨の日の出力にも使います。1日は、このMacの時刻の0時〜24時。</div>
   </div>
   <div class="card pad">
     <div class="loadbar" id="h-load"></div>
@@ -636,7 +651,30 @@ function renderNowControls(){
   for(const c of Object.values(S.cards))stepper(c.stp,'直近 '+spanLabel(NOW_STEPS[i]*3600),i>0,i<NOW_STEPS.length-1,()=>go(-1),()=>go(1));
   seg($('now-mode'),[['total','合計'],['ports','ポート内訳']],S.nowMode,m=>{S.nowMode=m;renderNowControls();for(const c of Object.values(S.cards))showOuts(c);refreshNow()});
 }
+// 「いま」タブ右上の天気。現在の気温が取れていなければ、今日の天気と最高/最低だけ出す
+function renderNowWx(){const box=$('now-wx');box.onclick=toggleHourly;const w=S.status&&S.status.weather;const t=w&&w.today,n=w&&w.now;
+  if(!w||(!t&&!n)){box.hidden=true;return}box.hidden=false;
+  const [ic,lb]=wxIcon(n?n.code:t.code);
+  box.title=`${w.place||''} · ${lb}`+(t?` · 最高 ${Math.round(t.tmax)}℃ / 最低 ${Math.round(t.tmin)}℃ · 日照 ${t.sun_h??'-'} 時間 · 降水 ${t.precip??'-'} mm`:'');
+  box.innerHTML=`<span class="ic">${ic}</span>`+(n&&n.temp!=null?`<b>${Math.round(n.temp)}<span class="u">℃</span></b>`:'')
+    +(t?`<small>${Math.round(t.tmax)}/${Math.round(t.tmin)}℃ · 日照 ${t.sun_h??'-'}h</small>`:'')}
+// 天気をタップすると、1 時間ごとのカードを横に並べる。いまの時刻のカードを枠で示し、そこまでスクロールしておく
+async function toggleHourly(){const box=$('now-hourly'),btn=$('now-wx');
+  if(!box.hidden){box.hidden=true;btn.classList.remove('open');return}
+  box.hidden=false;btn.classList.add('open');box.innerHTML='<div class="msg">読み込んでいます…</div>';
+  let r;try{r=await api('/api/weather-hourly')}catch(e){box.innerHTML='<div class="msg">読み込めませんでした</div>';return}
+  if(!r.hours.length){box.innerHTML='<div class="msg">1 時間ごとの天気はありません</div>';return}
+  box.replaceChildren();const ni=r.hours.findIndex(x=>x.now);let prevDay=null;
+  r.hours.forEach((x,i)=>{const [d,hm]=x.t.split('T');const h=+hm.slice(0,2);
+    const c=el('div','hc'+(i<ni?' past':'')+(x.now?' now':'')+(d!==prevDay&&prevDay!==null?' d0':''));
+    if(d!==prevDay&&prevDay!==null)c.dataset.d=(+d.slice(5,7))+'/'+(+d.slice(8,10));prevDay=d;
+    let [ic,lb]=wxIcon(x.code);if(x.day===0&&(x.code===0||x.code===1))ic='🌙';
+    c.title=`${x.t.replace('T',' ')} ${lb}`;
+    c.innerHTML=`<span class="h">${x.now?'いま':h+'時'}</span><span class="i">${ic}</span><span class="tp">${x.temp!=null?Math.round(x.temp)+'°':'-'}</span>`
+      +`<span class="pp">${x.pop?x.pop+'%':''}</span>`;box.append(c)});
+  const cur=box.querySelector('.hc.now');if(cur)box.scrollLeft=cur.offsetLeft-box.offsetLeft-8}
 function updateNow(){
+  renderNowWx();
   const devs=S.status?S.status.devices:[];const box=$('cards');
   if(!devs.length){for(const k of Object.keys(S.cards))delete S.cards[k];
     if(!box.querySelector('.empty')){box.replaceChildren();const e=el('div','card empty','機器が登録されていません。');const b=el('button','btn','機器を追加する');b.style.display='block';b.style.margin='10px auto 0';b.onclick=()=>setTab('devices');e.append(b);box.append(e)}return}

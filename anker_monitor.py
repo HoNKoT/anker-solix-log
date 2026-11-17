@@ -191,8 +191,10 @@ def save_settings(new: dict) -> dict:
 # ───────────────────────── 天気 (Open-Meteo) ─────────────────────────
 # キー不要・無料の Open-Meteo から、設定した場所の日ごとの天気を取る。ソーラーの発電量と見比べるため
 WEATHER_DAILY = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration,shortwave_radiation_sum"
-WEATHER_EVERY = 3 * 3600
+WEATHER_EVERY = 30 * 60  # 「いま」タブに出す現在の気温のため 30 分ごと (日ごとの値もついでに更新)
 WEATHER_WAKE = threading.Event()  # 場所を変えたら、待たずに取り直す
+WEATHER_NOW: dict = {}  # 現在の天気 {code, temp, at}。取れたホストが current を返さないときは空のまま
+WEATHER_HOURLY: dict = {}  # 1 時間ごと (3 時間前〜24 時間後) {at, hours: [{t, code, temp, pop, day}]}
 
 
 def _get_json(url: str, params: dict) -> dict:
@@ -218,7 +220,12 @@ def fetch_weather(loc: dict, start: str | None = None, end: str | None = None) -
         j = _get_json("https://archive-api.open-meteo.com/v1/archive", {**base, "start_date": start, "end_date": end})
     else:
         try:
-            j = _get_json("https://api.open-meteo.com/v1/forecast", {**base, "past_days": 92, "forecast_days": 1})
+            j = _get_json("https://api.open-meteo.com/v1/forecast", {**base, "past_days": 92, "forecast_days": 1,
+                                                                    "current": "temperature_2m,weather_code"})
+            c = j.get("current") or {}
+            if c.get("weather_code") is not None:
+                WEATHER_NOW.clear()
+                WEATHER_NOW.update({"code": c["weather_code"], "temp": c.get("temperature_2m"), "at": time.time()})
         except OSError:
             # api.open-meteo.com だけ TLS の接続がタイムアウトするネットワークがあったので、同じ値を返す別のホストで取り直す
             today = time.strftime("%Y-%m-%d")
@@ -238,8 +245,56 @@ def fetch_weather(loc: dict, start: str | None = None, end: str | None = None) -
     return out
 
 
+def fetch_hourly(loc: dict) -> list[dict]:
+    """1 時間ごとの天気 (3 時間前〜24 時間後)。t は場所の現地時刻 "YYYY-MM-DDTHH:00"、pop は降水確率 %。"""
+    base = {"latitude": loc["lat"], "longitude": loc["lon"], "timezone": "auto",
+            "hourly": "temperature_2m,weather_code,precipitation_probability,is_day"}
+    try:
+        h = _get_json("https://api.open-meteo.com/v1/forecast", {**base, "past_hours": 3, "forecast_hours": 24})["hourly"]
+    except OSError:  # fetch_weather と同じく、つながらないネットワークでは別ホストから今日・明日の 2 日ぶんを取って切り出す
+        h = _get_json("https://historical-forecast-api.open-meteo.com/v1/forecast",
+                      {**base, "start_date": time.strftime("%Y-%m-%d"),
+                       "end_date": time.strftime("%Y-%m-%d", time.localtime(time.time() + 86400))})["hourly"]
+    now = time.strftime("%Y-%m-%dT%H:00")
+    later = time.strftime("%Y-%m-%dT%H:00", time.localtime(time.time() + 24 * 3600))
+    early = time.strftime("%Y-%m-%dT%H:00", time.localtime(time.time() - 3 * 3600))
+    out = []
+    for i, t in enumerate(h.get("time") or []):
+        if not (early <= t <= later):
+            continue
+        g = lambda k: (h.get(k) or [None] * (i + 1))[i]  # noqa: E731
+        out.append({"t": t, "code": g("weather_code"), "temp": g("temperature_2m"),
+                    "pop": g("precipitation_probability"), "day": g("is_day"), "now": t == now})
+    return out
+
+
+def weather_hourly() -> dict:
+    """「いま」タブで天気をタップしたとき用。手元の値が 30 分より古ければ取り直す。"""
+    loc = load_settings().get("location")
+    if not loc:
+        return {"hours": []}
+    if not WEATHER_HOURLY or time.time() - WEATHER_HOURLY["at"] > WEATHER_EVERY:
+        try:
+            WEATHER_HOURLY.update({"at": time.time(), "hours": fetch_hourly(loc)})
+        except Exception as e:
+            LOG.warning("1 時間ごとの天気を取れませんでした: %s", e)
+    hours = WEATHER_HOURLY.get("hours") or []
+    now = time.strftime("%Y-%m-%dT%H:00")  # 取ってから時間がたっていても「いま」の印がずれないように付け直す
+    return {"place": loc.get("name"), "hours": [{**x, "now": x["t"] == now} for x in hours]}
+
+
+def weather_now(db: "HistoryDB") -> dict | None:
+    """「いま」タブ用: 場所の名前、今日の日ごとの値、現在の値 (1 時間以内に取れたものだけ)。場所が未設定なら None。"""
+    loc = load_settings().get("location")
+    if not loc:
+        return None
+    today = time.strftime("%Y-%m-%d")
+    now = dict(WEATHER_NOW) if WEATHER_NOW and time.time() - WEATHER_NOW["at"] < 3600 else None
+    return {"place": loc.get("name"), "today": db.weather_rows(today, today + "~").get(today), "now": now}
+
+
 def weather_loop(db: "HistoryDB") -> None:
-    """場所が設定されていれば、3 時間ごと (と場所を変えたとき) に天気を取って weather 表に書く。
+    """場所が設定されていれば、30 分ごと (と場所を変えたとき) に天気を取って weather 表に書く。
     初回と場所を変えたときは、記録のある最初の日までさかのぼって埋める。"""
     while True:
         loc = load_settings().get("location")
@@ -2055,7 +2110,7 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                 if u.path in PAGE_PATHS and not (u.path == "/history" and "dev" in parse_qs(u.query)):
                     self._send(200, HTML_FILE.read_bytes(), "text/html")
                 elif u.path == "/status":
-                    self._json(mgr.snapshot())
+                    self._json({**mgr.snapshot(), "weather": weather_now(mgr.db)})
                 elif u.path in ("/history", "/api/history"):  # /history?dev=… は旧名 (ページの /history と区別)
                     t0, t1 = span(q)
                     b = nice_bucket(t1 - t0)
@@ -2088,6 +2143,8 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                                 "daily": mgr.db.savings_rows(t0, t1, q.get("dev") or None),
                                 "weather": mgr.db.weather_rows(d0, d1)})
                     self._json(out)
+                elif u.path == "/api/weather-hourly":
+                    self._json(weather_hourly())
                 elif u.path == "/api/geocode":  # 天気の場所を地名で探す (設定はこのMacからだけなので、ここも同じ)
                     self._json({"results": geocode(q.get("q", ""))})
                 elif u.path == "/api/settings":
@@ -2203,7 +2260,7 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
 
 
 LAN_READ_PATHS = {"/", "/index.html", "/history", "/status", "/ports", "/summary", "/api/daily", "/api/history",
-                  "/api/history-devices", "/api/storage", "/api/settings", "/api/raw", "/favicon.ico"}
+                  "/api/history-devices", "/api/storage", "/api/settings", "/api/raw", "/api/weather-hourly", "/favicon.ico"}
 
 
 # ───────────────────────── 起動 ─────────────────────────
