@@ -1,9 +1,16 @@
 # Anker Monitor (スマホアプリ)
 
-記録している Mac のバックエンド (`anker_monitor.py`) の `GET /status` を読んで、
-ポータブル電源の残量・入出力・充電状態をスマホで見るアプリ。Android と iOS (画面のみ。ウィジェットは Android だけ)。
+記録している Mac のバックエンド (`anker_monitor.py`) を読んで、
+ポータブル電源の残量・入出力・充電状態と、月ごとの電力量をスマホで見るアプリ。Android と iOS (画面のみ。ウィジェットは Android だけ)。
 
-- **画面**: 機器ごとの残量 %、入力 W / 出力 W、充電中かどうか、接続状態。表示中は 3 秒おきに読む。
+- **いま タブ**: 機器ごとの残量 %、入力 W / 出力 W、充電中かどうか、接続状態 (`GET /status`)。表示中は 3 秒おきに読む。
+  - 機器どうしで給電しているときは、入力・出力とは別に **Transfer** の W (相手が受け取った W) を出し、送り側にはロス (送った W − 受け取った W) も出す。
+  - 右上に天気 (いまの天気・気温、今日の最高/最低・日照)。天気の場所を設定していなければ出ない。
+    タップすると `GET /api/weather-hourly` を読み、1 時間ごとの天気 (時刻・天気・気温・降水確率) を横に並べる。「いま」のカードを左端にして開く。
+- **月ごと タブ**: `GET /api/daily?from=0` を読み、直近 3 か月の電力量 (入力・出力・Transfer・ソーラー・節約額・日照) を出す。
+  「さらに前の月を表示」で記録のある一番古い月までさかのぼれる。月をタップすると日ごとの行 (天気と最高/最低つき) を開く。
+  節約額と Transfer の数え方はダッシュボード (`dashboard.html` の `renderDaily()`) と同じで、全機器の合計。
+  単価・天気の場所の変更や、1 台ごとの表示はダッシュボードで行う (スマホのトークンは読み取り専用)。
 - **ホーム画面ウィジェット**: 機器ごとの残量 % と充電 / 放電。WorkManager で 15 分おきに更新し、
   アプリを開いたときにもすぐ反映する。即時のプッシュ (FCM) は無い。
 - 読み取りだけ。バックエンドの API (`amon lan on` で外に出る読み取り用のパス) を Bearer トークン付きで読む。
@@ -12,11 +19,12 @@
 
 ```
 mobile/
-├── shared/       Kotlin Multiplatform。/status の型、Ktor の API、URL の補完、定期取得、エラーの言い分け
+├── shared/       Kotlin Multiplatform。API の型とパース、Ktor の API、URL の補完、定期取得、エラーの言い分け、
+│                 天気の表示、月ごとのまとめ (節約・Transfer の数え方)
 │   ├── commonMain    共通ロジック
 │   ├── androidMain   OkHttp エンジン、DataStore への保存
 │   └── iosMain       Darwin エンジン、NSUserDefaults への保存
-├── sharedUi/     Compose Multiplatform の画面 (設定・メイン)、ViewModel、Preview
+├── sharedUi/     Compose Multiplatform の画面 (設定・いま・月ごと)、ViewModel、Preview
 │   └── iosMain       MainViewController() (iOS アプリから呼ぶ入口)
 ├── androidApp/   Android の入れ物 (MainActivity)、Glance のウィジェット、WorkManager
 ├── iosApp/       iOS の入れ物 (SwiftUI + Xcode プロジェクト)。SharedUi framework の MainViewController() を表示する
@@ -35,7 +43,7 @@ Android Studio で `mobile/` を開くか、コマンドで:
 ```bash
 cd mobile
 ./gradlew :androidApp:assembleDebug      # APK: androidApp/build/outputs/apk/debug/androidApp-debug.apk
-./gradlew :shared:testAndroidHostTest    # shared のユニットテスト (/status のパースなど)
+./gradlew :shared:testAndroidHostTest    # shared のユニットテスト (パース、天気、月ごとのまとめ、Transfer など)
 ./gradlew :androidApp:installDebug       # つないだ端末に入れる
 ```
 
@@ -45,7 +53,7 @@ cd mobile
 
 ## Preview とスクリーンショット
 
-画面の Preview は `sharedUi/src/commonMain/.../Previews.kt` にある (見本の値は `/status` の形に合わせた `PreviewSamples`)。
+画面の Preview は `sharedUi/src/commonMain/.../Previews.kt` にある (見本の値は `/status` / `/api/weather-hourly` / `/api/daily` の形に合わせた `PreviewSamples`)。
 Android Studio の Preview でも見られるほか、同じ Preview を両 OS で描いて画像にできる:
 
 ```bash
