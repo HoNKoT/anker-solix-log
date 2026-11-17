@@ -118,6 +118,9 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .u{font-size:.58em;font-weight:500;margin-left:1px}
 .dtab td{white-space:nowrap}
 .price{display:flex;align-items:center;gap:6px;font-size:calc(12px*var(--fs,1));color:var(--sub);margin-top:10px}
+.wxset{flex-wrap:wrap}.wxset #d-place{color:var(--fg)}.wxset input{width:150px!important;text-align:left!important}
+.wxres{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.wxres:empty{display:none}
+.dtab .wx{margin-left:4px}.dtab .wt{display:block;color:var(--sub);font-size:.8em;font-weight:400}
 .price input{width:70px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:6px;padding:3px 6px;font:inherit;text-align:right}
 .main{display:none}
 .mleft{display:flex;align-items:baseline;justify-content:center;gap:4px 10px;flex-wrap:wrap;min-width:0}
@@ -229,7 +232,10 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
     <div id="d-months"></div>
     <button class="btn ghost sm" id="d-more" hidden></button>
     <div class="price">電気代の単価 <input id="d-price" type="number" step="0.1" min="0" inputmode="decimal"> 円 / kWh</div>
-    <div class="note" style="margin-top:6px">節約額 = ソーラーで賄えた出力 kWh × 単価。ソーラー入力は貯め続け、出力 (Transfer は含まない) はその貯めから使います。貯めが尽きたあとの出力は節約に数えません。全機器では全機器の合計で数えます (ソーラーが入る機器と出力する機器が違ってもよい)。使い切れなかったソーラー分は翌日以降に持ち越し、雨の日の出力にも使います。1日は、このMacの時刻の0時〜24時。</div>
+    <div class="price wxset">天気の場所 <span id="d-place"></span>
+      <input id="d-place-q" type="search" placeholder="地名 (例: Yokohama, 横浜市)" enterkeyhint="search"><button class="btn ghost sm" id="d-place-go">探す</button></div>
+    <div class="wxres" id="d-place-res"></div>
+    <div class="note" style="margin-top:6px">天気は設定した場所の Open-Meteo の値 (このMacから 3 時間ごとに取得)。節約額 = ソーラーで賄えた出力 kWh × 単価。ソーラー入力は貯め続け、出力 (Transfer は含まない) はその貯めから使います。貯めが尽きたあとの出力は節約に数えません。全機器では全機器の合計で数えます (ソーラーが入る機器と出力する機器が違ってもよい)。使い切れなかったソーラー分は翌日以降に持ち越し、雨の日の出力にも使います。1日は、このMacの時刻の0時〜24時。</div>
   </div>
   <div class="card pad">
     <div class="loadbar" id="h-load"></div>
@@ -666,7 +672,7 @@ async function loadDaily(){
   // ソーラーの貯めは記録の最初から積み上げるので、全期間をもらう (月別の表にも全期間を使う)
   let r;try{r=await loading('d-load',api('/api/daily?from=0&to='+Math.floor(Date.now()/1000)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):'')))}catch(e){return}
   D.price=r.settings.price_per_kwh;const pi=$('d-price');if(document.activeElement!==pi)pi.value=D.price;
-  D.rows=r.rows;renderDaily();
+  D.rows=r.rows;D.weather=r.weather||{};D.place=r.settings.location||null;renderDaily();
 }
 // 月の切り替え・月の開閉は、取ってある全期間の行から描き直すだけ
 function renderDaily(){
@@ -697,6 +703,11 @@ function renderDaily(){
   const n=v=>kv(v)+Uc;
   // ロスは数 Wh のことが多く、小数 2 桁の kWh だと 0.00 になるので 3 桁で出す
   const xfTxt=(t,l)=>n(t)+(l>=0.5?'<small>('+(l/1000).toFixed(3)+' loss)</small>':'');
+  const W=D.weather||{};
+  const sunH=days=>{const v=days.map(d=>W[d]&&W[d].sun_h).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b,0):null};
+  const wxCell=day=>{const w=W[day];if(!w)return '';const [ic,lb]=wxIcon(w.code);
+    const tip=`${lb} 最高 ${Math.round(w.tmax)}℃ / 最低 ${Math.round(w.tmin)}℃ · 日照 ${w.sun_h??'-'} 時間 · 降水 ${w.precip??'-'} mm`;
+    return `<span class="wx" title="${tip}">${ic}</span><span class="wt">${Math.round(w.tmax)}/${Math.round(w.tmin)}℃ · 日照${w.sun_h??'-'}h</span>`};
   const box=$('d-months');box.replaceChildren();
   for(const k of keys.slice(0,D.shown)){const s=months.get(k);const open=D.open.has(k)&&!!s;const [y,mo]=k.split('-');
     const blk=el('div','mblk'+(open?' open':'')+(s?'':' empty'));
@@ -707,27 +718,44 @@ function renderDaily(){
     big.innerHTML=`<div class="yen"><b>${yenU(s.wh_saved*rate)}</b><small>節約 (ソーラーで賄えた ${kwh(s.wh_saved)})</small></div>
       <div><b>${kwhU(s.wh_in)}</b><small>入力 (うちソーラー ${kwh(s.wh_solar)})</small></div><div><b>${kwhU(s.wh_out)}</b><small>出力 (≒ ${yen(s.wh_out*rate)})</small></div>`
       +(hasX?`<div><b>${kwhU(s.xt)}</b><small>Transfer${s.xl>=0.05?' ('+kwh(s.xl)+' loss)':''} · 入出力には含めない</small></div>`:'')
-      +`<div><b>${kwhU(s.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`;
+      +`<div><b>${kwhU(s.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`
+      +(sunH(s.days)!=null?`<div><b>${sunH(s.days).toFixed(0)}<span class="u">時間</span></b><small>日照 (天気の記録から)</small></div>`:'');
     head.append(big);blk.append(head);
     if(open){const t=el('table','dtab');
       t.innerHTML=`<tr><th>日</th><th>入力${Uh}</th><th>出力${Uh}</th>`+(hasX?`<th>Transfer${Uh}</th>`:'')+`<th>ソーラー${Uh}</th><th>節約</th></tr>`;
       for(const day of s.days.sort().reverse()){const m=all.get(day);const dt=new Date(day+'T00:00:00');const x=xf(m);
         const tr=el('tr',dt.getDay()===0||dt.getDay()===6?'wk':'');
-        tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})</td><td class="in">${n(m.wh_in)}</td><td class="out">${n(m.wh_out)}</td>`
+        tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})${wxCell(day)}</td><td class="in">${n(m.wh_in)}</td><td class="out">${n(m.wh_out)}</td>`
           +(hasX?`<td class="xf">${xfTxt(x.t,x.l)}</td>`:'')+`<td>${n(m.wh_solar)}</td><td>${yenU(m.wh_saved*rate)}</td>`;t.append(tr)}
       blk.append(t)}
     box.append(blk)}
   const rest=keys.length-D.shown,more=$('d-more');more.hidden=rest<=0;
   more.textContent=`さらに前の月を表示 (あと ${rest} か月)`;
-  fitDailyUnits();
+  renderPlace();fitDailyUnits();
 }
 // 数値の横に単位を付けると表がはみ出す (数値と単位が 2 行に分かれる幅) ときだけ、単位を見出しに移す
 function fitDailyUnits(){for(const t of document.querySelectorAll('#d-months .dtab')){const w=t.parentElement.clientWidth;if(!w)continue;
   t.classList.remove('hdru');if(t.scrollWidth>w)t.classList.add('hdru')}}
+// WMO の天気コード → 絵文字と名前
+function wxIcon(c){
+  if(c===0)return ['☀️','快晴'];if(c===1)return ['🌤️','晴れ'];if(c===2)return ['⛅','一部曇り'];if(c===3)return ['☁️','曇り'];
+  if(c===45||c===48)return ['🌫️','霧'];if(c>=51&&c<=57)return ['🌦️','霧雨'];if(c>=61&&c<=67)return ['🌧️','雨'];
+  if(c>=71&&c<=77)return ['❄️','雪'];if(c>=80&&c<=82)return ['🌦️','にわか雨'];if(c===85||c===86)return ['🌨️','にわか雪'];
+  if(c>=95)return ['⛈️','雷雨'];return ['·','']}
+function renderPlace(){const D=S.daily;$('d-place').textContent=D.place?D.place.name||`${D.place.lat}, ${D.place.lon}`:'未設定'}
 function initDailyUI(){
   $('d-more').onclick=()=>{S.daily.shown+=3;renderDaily()};
   const pi=$('d-price');pi.onchange=async()=>{const v=parseFloat(pi.value);if(!(v>=0))return;
     try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({price_per_kwh:v})})}catch(e){}loadDaily()};
+  const res=$('d-place-res'),qi=$('d-place-q');
+  const setPlace=async loc=>{try{await api('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:loc})})}
+    catch(e){res.textContent='保存できませんでした: '+e.message;return}res.replaceChildren();qi.value='';loadDaily()};
+  const search=async()=>{const q=qi.value.trim();if(!q)return;res.textContent='探しています…';
+    let r;try{r=await loading('d-load',api('/api/geocode?q='+encodeURIComponent(q)))}catch(e){res.textContent='探せませんでした: '+e.message;return}
+    res.replaceChildren();if(!r.results.length){res.textContent='見つかりませんでした';return}
+    for(const x of r.results){const b=el('button','btn ghost sm',x.name);b.onclick=()=>setPlace(x);res.append(b)}
+    if(S.daily.place){const b=el('button','btn ghost sm','天気を記録しない');b.onclick=()=>setPlace(null);res.append(b)}};
+  $('d-place-go').onclick=search;qi.onkeydown=e=>{if(e.key==='Enter')search()};
   addEventListener('resize',fitDailyUnits);
   // 履歴タブが隠れている間は幅が 0 で測れないので、見えるようになったら測り直す
   new ResizeObserver(fitDailyUnits).observe($('d-card'));

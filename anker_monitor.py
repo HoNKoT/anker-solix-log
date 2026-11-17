@@ -34,6 +34,7 @@ import asyncio
 import hashlib
 import hmac
 import itertools
+import urllib.request
 import json
 import logging
 import math
@@ -166,6 +167,14 @@ def save_settings(new: dict) -> dict:
         if not (0 <= v <= 10000):
             raise ValueError("電気代の単価が範囲外です")
         cur["price_per_kwh"] = round(v, 2)
+    if "location" in new:  # 天気を取る場所。None で取らない
+        loc = new["location"]
+        if loc:
+            lat, lon = float(loc["lat"]), float(loc["lon"])
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("緯度・経度が範囲外です")
+            loc = {"name": str(loc.get("name") or "")[:80], "lat": round(lat, 4), "lon": round(lon, 4)}
+        cur["location"] = loc or None
     if "sample_interval" in new:
         v = int(new["sample_interval"])
         if v not in (10, 30, 60):
@@ -174,7 +183,84 @@ def save_settings(new: dict) -> dict:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps(cur))
     apply_settings(cur)
+    if "location" in new:
+        WEATHER_WAKE.set()
     return cur
+
+
+# ───────────────────────── 天気 (Open-Meteo) ─────────────────────────
+# キー不要・無料の Open-Meteo から、設定した場所の日ごとの天気を取る。ソーラーの発電量と見比べるため
+WEATHER_DAILY = "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,sunshine_duration,shortwave_radiation_sum"
+WEATHER_EVERY = 3 * 3600
+WEATHER_WAKE = threading.Event()  # 場所を変えたら、待たずに取り直す
+
+
+def _get_json(url: str, params: dict) -> dict:
+    req = urllib.request.Request(url + "?" + urlencode(params), headers={"User-Agent": "anker-monitor"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read())
+
+
+def geocode(q: str) -> list[dict]:
+    # 日本語の地名は「東京」では 0 件、「東京都」なら出るので、0 件のときは市・都・府・県を付けて探し直す
+    for name in (q, *(q + x for x in "市都府県" if not q.isascii())):
+        j = _get_json("https://geocoding-api.open-meteo.com/v1/search", {"name": name, "count": 8, "language": "ja"})
+        if j.get("results"):
+            break
+    return [{"name": ", ".join(x for x in (r.get("name"), r.get("admin1"), r.get("country")) if x),
+             "lat": r["latitude"], "lon": r["longitude"]} for r in j.get("results") or []]
+
+
+def fetch_weather(loc: dict, start: str | None = None, end: str | None = None) -> list[dict]:
+    """日ごとの天気。start/end (YYYY-MM-DD) を渡すと過去の記録 (archive)、なければ直近 92 日 + 今日。"""
+    base = {"latitude": loc["lat"], "longitude": loc["lon"], "daily": WEATHER_DAILY, "timezone": "auto"}
+    if start:
+        j = _get_json("https://archive-api.open-meteo.com/v1/archive", {**base, "start_date": start, "end_date": end})
+    else:
+        try:
+            j = _get_json("https://api.open-meteo.com/v1/forecast", {**base, "past_days": 92, "forecast_days": 1})
+        except OSError:
+            # api.open-meteo.com だけ TLS の接続がタイムアウトするネットワークがあったので、同じ値を返す別のホストで取り直す
+            today = time.strftime("%Y-%m-%d")
+            j = _get_json("https://historical-forecast-api.open-meteo.com/v1/forecast",
+                          {**base, "start_date": time.strftime("%Y-%m-%d", time.localtime(time.time() - 92 * 86400)),
+                           "end_date": today})
+    d = j.get("daily") or {}
+    keys = ["weather_code", "temperature_2m_max", "temperature_2m_min", "precipitation_sum",
+            "sunshine_duration", "shortwave_radiation_sum"]
+    out = []
+    for i, day in enumerate(d.get("time") or []):
+        v = [(d.get(k) or [None] * (i + 1))[i] for k in keys]
+        if v[0] is None:  # まだ値の無い日 (archive の直近数日など)
+            continue
+        out.append({"day": day, "code": v[0], "tmax": v[1], "tmin": v[2], "precip": v[3],
+                    "sun_h": round(v[4] / 3600, 1) if v[4] is not None else None, "rad_mj": v[5]})
+    return out
+
+
+def weather_loop(db: "HistoryDB") -> None:
+    """場所が設定されていれば、3 時間ごと (と場所を変えたとき) に天気を取って weather 表に書く。
+    初回と場所を変えたときは、記録のある最初の日までさかのぼって埋める。"""
+    while True:
+        loc = load_settings().get("location")
+        wait = WEATHER_EVERY
+        try:
+            if loc:
+                key = f"{loc['lat']},{loc['lon']}"
+                if db.weather_place() != key:  # 場所が変わったら前の場所の天気は捨てる
+                    db.clear_weather(key)
+                rows = fetch_weather(loc)
+                first = db.first_day()
+                have = db.weather_first_day()
+                recent0 = rows[0]["day"] if rows else None
+                if first and recent0 and first < recent0 and (have is None or have > first):
+                    rows += fetch_weather(loc, first, recent0)
+                db.put_weather(rows)
+        except Exception as e:  # 通信できない時は 5 分後にまた試す (3 時間待つと、その日の分が空いたままになる)
+            LOG.warning("天気を取れませんでした: %s", e)
+            wait = 300
+        WEATHER_WAKE.wait(wait)
+        WEATHER_WAKE.clear()
 
 
 def apply_settings(cur: dict) -> None:
@@ -296,9 +382,48 @@ class HistoryDB:
         self._migrate()
         self._ensure()
         self._ids = {d: i for d, i in self.db.execute("SELECT dev, id FROM devices")}
-        if self.db.execute("PRAGMA user_version").fetchone()[0] < 1:
+        # 記録の書き直しは 1 回だけ。user_version はスキーマの版数に使っているので、別の表に印を残す
+        self.db.execute("CREATE TABLE IF NOT EXISTS fixes(name TEXT PRIMARY KEY, at INTEGER)")
+        if not self.db.execute("SELECT 1 FROM fixes WHERE name='sharing_multi_port'").fetchone():
             self.fix_sharing()
-            self.db.execute("PRAGMA user_version=1")
+            self.db.execute("INSERT INTO fixes VALUES('sharing_multi_port', ?)", (int(time.time()),))
+            self.db.commit()
+
+    # ── 天気 ──
+    def weather_place(self) -> str | None:
+        with self.lock:
+            r = self.db.execute("SELECT v FROM kv WHERE k='weather_place'").fetchone()
+        return r[0] if r else None
+
+    def clear_weather(self, place: str) -> None:
+        with self.lock:
+            self.db.execute("DELETE FROM weather")
+            self.db.execute("INSERT OR REPLACE INTO kv VALUES('weather_place', ?)", (place,))
+            self.db.commit()
+
+    def put_weather(self, rows: list[dict]) -> None:
+        now = int(time.time())
+        with self.lock:
+            self.db.executemany("INSERT OR REPLACE INTO weather VALUES(?,?,?,?,?,?,?,?)",
+                                [(r["day"], r["code"], r["tmax"], r["tmin"], r["precip"], r["sun_h"], r["rad_mj"], now)
+                                 for r in rows])
+            self.db.commit()
+
+    def weather_rows(self, d0: str, d1: str) -> dict[str, dict]:
+        with self.lock:
+            rs = self.db.execute("SELECT day, code, tmax, tmin, precip, sun_h, rad_mj FROM weather "
+                                 "WHERE day>=? AND day<? ORDER BY day", (d0, d1)).fetchall()
+        return {r[0]: {"code": r[1], "tmax": r[2], "tmin": r[3], "precip": r[4], "sun_h": r[5], "rad_mj": r[6]}
+                for r in rs}
+
+    def weather_first_day(self) -> str | None:
+        with self.lock:
+            return self.db.execute("SELECT MIN(day) FROM weather").fetchone()[0]
+
+    def first_day(self) -> str | None:
+        with self.lock:
+            t = self.db.execute("SELECT MIN(ts) FROM log").fetchone()[0]
+        return time.strftime("%Y-%m-%d", time.localtime(t)) if t else None
 
     def fix_sharing(self) -> dict:
         """記録済みの log を、いまの find_sharing で見直して、機器どうしの給電を Transfer に書き直す (1 回だけ)。
@@ -367,6 +492,10 @@ class HistoryDB:
             if c not in have_s:
                 self.db.execute(f"ALTER TABLE savings ADD COLUMN {c} REAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS log_columns(col TEXT PRIMARY KEY, label TEXT, dir TEXT, unit TEXT, note TEXT)")
+        # 天気: 設定した場所の日ごとの値 (Open-Meteo)。code は WMO の天気コード、sun_h は日照時間、rad_mj は日射量 MJ/m²
+        self.db.execute("CREATE TABLE IF NOT EXISTS weather(day TEXT PRIMARY KEY, code INTEGER, tmax REAL, tmin REAL, "
+                        "precip REAL, sun_h REAL, rad_mj REAL, updated INTEGER)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT)")
         rows = [("ts", "時刻", None, "UNIX秒", ""), ("dev", "機器 (devices.id)", None, "", ""),
                 ("pct", "残量", None, "%", ""), ("pin", "入力 合計", "in", "W", "0W のときは NULL (記録しない)"),
                 ("pout", "出力 合計", "out", "W", ""), ("chg", "状態", None, "", "0=待機 1=充電 2=放電"),
@@ -1946,14 +2075,21 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                 elif u.path == "/api/daily":
                     t0, t1 = span(q if "from" in q else {**q, "hours": 24 * 31})
                     mgr.db.refresh_savings(3)  # 直近 3 日は、いつでも最新にしてから返す
+                    off = time.localtime().tm_gmtoff or 0
+                    d0, d1 = (time.strftime("%Y-%m-%d", time.gmtime(t + off)) for t in (t0, t1 + 86400))
                     self._json({"rows": mgr.db.savings_rows(t0, t1, q.get("dev") or None), "settings": load_settings(),
-                                "tz_offset": time.localtime().tm_gmtoff or 0})
+                                "weather": mgr.db.weather_rows(d0, d1), "tz_offset": off})
                 elif u.path == "/api/raw":  # 解析用 (amon get): 間引かない log と、日ごとの集計
                     t0, t1 = span(q if "from" in q else {**q, "hours": float(q.get("hours", 24))})
                     out = mgr.db.raw(q.get("dev") or None, t0, t1, min(int(q.get("limit", 20000)), 200000))
-                    out.update({"from": t0, "to": t1, "tz_offset": time.localtime().tm_gmtoff or 0,
-                                "daily": mgr.db.savings_rows(t0, t1, q.get("dev") or None)})
+                    off = time.localtime().tm_gmtoff or 0
+                    d0, d1 = (time.strftime("%Y-%m-%d", time.gmtime(t + off)) for t in (t0, t1 + 86400))
+                    out.update({"from": t0, "to": t1, "tz_offset": off,
+                                "daily": mgr.db.savings_rows(t0, t1, q.get("dev") or None),
+                                "weather": mgr.db.weather_rows(d0, d1)})
                     self._json(out)
+                elif u.path == "/api/geocode":  # 天気の場所を地名で探す (設定はこのMacからだけなので、ここも同じ)
+                    self._json({"results": geocode(q.get("q", ""))})
                 elif u.path == "/api/settings":
                     self._json(load_settings())
                 elif u.path == "/api/history-devices":
@@ -2076,6 +2212,7 @@ async def amain(args) -> None:
     apply_settings(load_settings())
     mgr = Manager(loop, args.demo)
     threading.Thread(target=lambda: (mgr.db.refresh_savings(), mgr.db.thin_old()), daemon=True).start()  # 節電記録を全期間ぶん作ってから間引く (初回だけ重い)
+    threading.Thread(target=weather_loop, args=(mgr.db,), daemon=True).start()
     if args.host is None:  # 指定が無ければ、LAN 公開のスイッチ (~/.anker-monitor/lan) で決める
         args.host = "0.0.0.0" if LAN_FLAG.exists() else "127.0.0.1"
     loopback = args.host in ("127.0.0.1", "localhost")
