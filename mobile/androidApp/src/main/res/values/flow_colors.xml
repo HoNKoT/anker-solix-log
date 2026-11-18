@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ダッシュボード (dashboard.html) の in / out / sub の色と同じ -->
+<resources>
+    <color name="flow_in">#1F9D55</color>
+    <color name="flow_out">#E8590C</color>
+    <color name="flow_off">#6E6E73</color>
+</resources>

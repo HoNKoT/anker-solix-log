@@ -2,5 +2,5 @@
 <resources>
     <string name="app_name">Anker Monitor</string>
     <string name="widget_name">Anker 残量</string>
-    <string name="widget_description">ポータブル電源の残量と充電状態 (15分ごとに更新)</string>
+    <string name="widget_description">ポータブル電源の残量と入力 / 出力の W (15分ごとに更新)</string>
 </resources>

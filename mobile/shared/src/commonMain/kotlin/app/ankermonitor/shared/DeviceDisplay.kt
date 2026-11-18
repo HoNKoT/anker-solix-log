@@ -14,6 +14,13 @@ val Device.inputWatts: Int get() = (powerIn ?: 0.0).roundToInt()
 val Device.outputWatts: Int get() = (powerOut ?: 0.0).roundToInt()
 
 /**
+ * 矢印に出す入力 / 出力の W。ダッシュボード (updateCard) と同じく、機器どうしの給電も普通の入力 / 出力として足す
+ * (集計用の [inputWatts] / [outputWatts] からは引かれているので、そのままだと相手から充電中なのに 0 W になる)
+ */
+val Device.flowInWatts: Int get() = ((powerIn ?: 0.0) + shared.orEmpty().filter { it.dir == "in" }.sumOf { it.w }).roundToInt()
+val Device.flowOutWatts: Int get() = ((powerOut ?: 0.0) + shared.orEmpty().filter { it.dir == "out" }.sumOf { it.w }).roundToInt()
+
+/**
  * 充電 / 放電の向き。バックエンドの `charging` を優先し、UNKNOWN のときだけ
  * メニューバーアプリのアイコンと同じ「1W 以上で、多い方」の判定にする。
  */

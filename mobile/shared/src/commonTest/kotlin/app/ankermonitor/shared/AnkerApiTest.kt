@@ -17,7 +17,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class AnkerApiTest {
-    private val connection = Connection("http://100.64.1.2:19877", "secret")
+    private val connection = Connection("", "http://100.64.1.2:19877", "secret")
 
     private fun api(handler: MockRequestHandler): AnkerApi =
         AnkerApi(HttpClient(MockEngine(handler)) { expectSuccess = false })
@@ -76,7 +76,7 @@ class AnkerApiTest {
 }
 
 class AnkerApiExtraTest {
-    private val connection = Connection("http://100.64.1.2:19877", "secret")
+    private val connection = Connection("", "http://100.64.1.2:19877", "secret")
 
     private fun api(handler: MockRequestHandler): AnkerApi =
         AnkerApi(HttpClient(MockEngine(handler)) { expectSuccess = false; install(HttpTimeout) })
@@ -116,5 +116,55 @@ class AnkerApiExtraTest {
         val r2 = api { respond("not json") }.fetchHourlyWeather(connection)
         assertIs<Loaded.Failed>(r2)
         assertIs<Problem.Unreachable>(r2.problem)
+    }
+}
+
+class AnkerApiFallbackTest {
+    private val both = Connection("http://my-mac.local:19877", "http://my-mac.ts.net:19877", "t")
+    private val ok = """{"devices":[]}"""
+
+    @Test
+    fun ローカルに届けばローカルで読む() = runTest {
+        val hosts = mutableListOf<String>()
+        val api = AnkerApi(HttpClient(MockEngine { req -> hosts += req.url.host; respond(ok) }) { expectSuccess = false })
+        val r = api.fetchStatus(both)
+        assertIs<FetchResult.Success>(r)
+        assertEquals("http://my-mac.local:19877", r.baseUrl)
+        assertEquals(listOf("my-mac.local"), hosts)
+    }
+
+    @Test
+    fun ローカルに届かなければグローバルで読み_30秒たつまでローカルを試さない() = runTest {
+        var now = 0L
+        val hosts = mutableListOf<String>()
+        val api = AnkerApi(
+            HttpClient(MockEngine { req ->
+                hosts += req.url.host
+                if (req.url.host == "my-mac.local") throw IllegalStateException("no route") else respond(ok)
+            }) { install(HttpTimeout); expectSuccess = false },
+            nowMillis = { now },
+        )
+        assertEquals("http://my-mac.ts.net:19877", (api.fetchStatus(both) as FetchResult.Success).baseUrl)
+        now = 10_000
+        api.fetchStatus(both)
+        assertEquals(listOf("my-mac.local", "my-mac.ts.net", "my-mac.ts.net"), hosts)
+        now = 40_000
+        api.fetchStatus(both)
+        assertEquals("my-mac.local", hosts[3])
+    }
+
+    @Test
+    fun トークン違いはグローバルへ回さない() = runTest {
+        val hosts = mutableListOf<String>()
+        val api = AnkerApi(HttpClient(MockEngine { req -> hosts += req.url.host; respondError(HttpStatusCode.Unauthorized) }) { expectSuccess = false })
+        assertEquals(FetchResult.Unauthorized, api.fetchStatus(both))
+        assertEquals(listOf("my-mac.local"), hosts)
+    }
+
+    @Test
+    fun 古い1つだけの接続先はTailscaleならグローバルに入れる() {
+        assertEquals(Connection("", "http://100.64.1.2:19877", "t"), legacyConnection("http://100.64.1.2:19877", "t"))
+        assertEquals(Connection("", "http://m.tail1.ts.net:19877", "t"), legacyConnection("http://m.tail1.ts.net:19877", "t"))
+        assertEquals(Connection("http://my-mac.local:19877", "", "t"), legacyConnection("http://my-mac.local:19877", "t"))
     }
 }

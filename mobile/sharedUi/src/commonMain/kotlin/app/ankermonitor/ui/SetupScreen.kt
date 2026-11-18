@@ -39,11 +39,12 @@ import kotlinx.coroutines.launch
 @Composable
 fun SetupScreen(
     initial: Connection?,
-    onSave: suspend (url: String, token: String) -> SaveResult,
+    onSave: suspend (localUrl: String, globalUrl: String, token: String) -> SaveResult,
     onDone: () -> Unit,
     onCancel: (() -> Unit)?,
 ) {
-    var url by rememberSaveable { mutableStateOf(initial?.url.orEmpty()) }
+    var local by rememberSaveable { mutableStateOf(initial?.localUrl.orEmpty()) }
+    var global by rememberSaveable { mutableStateOf(initial?.globalUrl.orEmpty()) }
     var token by rememberSaveable { mutableStateOf(initial?.token.orEmpty()) }
     var busy by rememberSaveable { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
@@ -66,21 +67,22 @@ fun SetupScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "記録している Mac (amon lan on 済み) の Tailscale の IP か MagicDNS 名を入れてください。" +
+                "記録している Mac (amon lan on 済み) のアドレスを入れてください。どちらか片方だけでもかまいません。" +
+                    "ローカルに届くときはローカル、届かないときはグローバルで読みます (グローバルの間も 30 秒おきにローカルを試します)。" +
                     "http:// と :19877 は省略できます。",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            OutlinedTextField(
-                value = url,
-                onValueChange = { url = it; error = null },
-                label = { Text("接続先 (例: 100.64.1.2)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-                supportingText = {
-                    val normalized = normalizeServerUrl(url)
-                    if (normalized.isNotEmpty()) Text("→ $normalized/status")
-                },
-                modifier = Modifier.fillMaxWidth(),
+            AddressField(
+                value = local,
+                onValueChange = { local = it; error = null },
+                label = "ローカル (例: my-mac.local)",
+                hint = "同じ Wi-Fi のとき",
+            )
+            AddressField(
+                value = global,
+                onValueChange = { global = it; error = null },
+                label = "グローバル (例: my-mac.tailnet.ts.net)",
+                hint = "外出先 (Tailscale の IP か MagicDNS 名)",
             )
             OutlinedTextField(
                 value = token,
@@ -95,12 +97,12 @@ fun SetupScreen(
             error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(
-                    enabled = !busy && url.isNotBlank(),
+                    enabled = !busy && (local.isNotBlank() || global.isNotBlank()),
                     onClick = {
                         busy = true
                         error = null
                         scope.launch {
-                            when (val r = onSave(url, token)) {
+                            when (val r = onSave(local, global, token)) {
                                 SaveResult.Saved -> onDone()
                                 // 保存はできているので閉じる。読めない理由はメイン画面が 3 回失敗した時点で出す
                                 is SaveResult.SavedButUnreachable -> onDone()
@@ -114,4 +116,20 @@ fun SetupScreen(
             }
         }
     }
+}
+
+@Composable
+private fun AddressField(value: String, onValueChange: (String) -> Unit, label: String, hint: String) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+        supportingText = {
+            val normalized = normalizeServerUrl(value)
+            Text(if (normalized.isNotEmpty()) "→ $normalized/status" else hint)
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
 }

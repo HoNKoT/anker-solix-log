@@ -16,7 +16,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
 class StatusPollerTest {
-    private val connection = Connection("http://100.64.1.2:19877", "t")
+    private val connection = Connection("", "http://100.64.1.2:19877", "t")
 
     /** 応答を順に返す (最後の応答はくり返す) */
     private fun poller(vararg responses: HttpStatusCode?): StatusPoller {

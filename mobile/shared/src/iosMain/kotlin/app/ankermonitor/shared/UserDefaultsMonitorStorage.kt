@@ -15,8 +15,10 @@ class UserDefaultsMonitorStorage(suiteName: String? = null) : MonitorStorage {
     override val snapshot: Flow<Snapshot> = snapshotFlow
 
     override suspend fun saveConnection(connection: Connection) {
-        defaults.setObject(connection.url, KEY_URL)
+        defaults.setObject(connection.localUrl, KEY_LOCAL_URL)
+        defaults.setObject(connection.globalUrl, KEY_GLOBAL_URL)
         defaults.setObject(connection.token, KEY_TOKEN)
+        defaults.removeObjectForKey(KEY_URL)
         defaults.removeObjectForKey(KEY_SNAPSHOT)
         connectionFlow.value = connection
         snapshotFlow.value = Snapshot()
@@ -28,8 +30,15 @@ class UserDefaultsMonitorStorage(suiteName: String? = null) : MonitorStorage {
     }
 
     private fun readConnection(): Connection? {
-        val url = defaults.stringForKey(KEY_URL)
-        return if (url.isNullOrEmpty()) null else Connection(url, defaults.stringForKey(KEY_TOKEN).orEmpty())
+        val token = defaults.stringForKey(KEY_TOKEN).orEmpty()
+        val local = defaults.stringForKey(KEY_LOCAL_URL).orEmpty()
+        val global = defaults.stringForKey(KEY_GLOBAL_URL).orEmpty()
+        val legacy = defaults.stringForKey(KEY_URL).orEmpty()
+        return when {
+            local.isNotEmpty() || global.isNotEmpty() -> Connection(local, global, token)
+            legacy.isNotEmpty() -> legacyConnection(legacy, token)
+            else -> null
+        }
     }
 
     private fun readSnapshot(): Snapshot = defaults.stringForKey(KEY_SNAPSHOT)
@@ -37,7 +46,10 @@ class UserDefaultsMonitorStorage(suiteName: String? = null) : MonitorStorage {
         ?: Snapshot()
 
     private companion object {
+        /** ローカル / グローバルに分ける前の 1 つだけの接続先 (読むだけ) */
         const val KEY_URL = "url"
+        const val KEY_LOCAL_URL = "local_url"
+        const val KEY_GLOBAL_URL = "global_url"
         const val KEY_TOKEN = "token"
         const val KEY_SNAPSHOT = "snapshot"
     }
