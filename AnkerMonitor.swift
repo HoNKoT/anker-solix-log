@@ -21,21 +21,51 @@ let launchConfigURL = dataDir.appendingPathComponent("launch.json")
 let backendLogURL = dataDir.appendingPathComponent("backend.log")
 
 /// ~/.anker-monitor/remote.json があれば「リモートモード」: 自分では Bluetooth もバックエンドも動かさず、
-/// 別の Mac のバックエンド (amon lan on + amon token new) を見に行く。amon remote <URL> <トークン> が作る。
-struct RemoteConfig: Decodable {
-    let url: String
-    let token: String?
+/// 別の Mac のバックエンド (amon lan on + amon token new) を見に行く。amon remote か、メニューの「接続先…」が作る。
+/// local (同じネットワークの 名前.local など) と global (Tailscale の …ts.net など) の 2 つを持てる。
+/// url は 1 つだけ持っていた頃の形 (読むだけ)。
+struct RemoteConfig: Codable {
+    var url: String? = nil
+    var local: String? = nil
+    var global: String? = nil
+    var token: String? = nil
+}
+
+let remoteFile = dataDir.appendingPathComponent("remote.json")
+
+/// 入力された「名前:ポート」「http://…」をそろえる (http:// とポート 19877 は省略可)。空なら nil
+func normalizeRemoteURL(_ raw: String?) -> URL? {
+    var s = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if s.isEmpty { return nil }
+    if !s.hasPrefix("http://") && !s.hasPrefix("https://") { s = "http://" + s }
+    while s.hasSuffix("/") { s.removeLast() }
+    guard var c = URLComponents(string: s), c.host != nil else { return nil }
+    if c.port == nil { c.port = 19877 }
+    return c.url
 }
 
 let remote: RemoteConfig? = {
-    guard let data = try? Data(contentsOf: dataDir.appendingPathComponent("remote.json")),
-          let cfg = try? JSONDecoder().decode(RemoteConfig.self, from: data),
-          URL(string: cfg.url)?.host != nil else { return nil }
+    guard let data = try? Data(contentsOf: remoteFile),
+          let cfg = try? JSONDecoder().decode(RemoteConfig.self, from: data) else { return nil }
     return cfg
 }()
-let isRemote = remote != nil
-let baseURL = URL(string: remote?.url ?? "http://localhost:19877")!
+/// 接続先の候補。ローカルが先 (届くならそちらが速い)。1 つも無ければリモートモードではない
+let remoteBases: [URL] = {
+    guard let r = remote else { return [] }
+    let both = [r.local, r.global].compactMap(normalizeRemoteURL)
+    return both.isEmpty ? [r.url].compactMap(normalizeRemoteURL) : both
+}()
+let isRemote = !remoteBases.isEmpty
+/// いま使っている接続先。ローカルに届かなければグローバルに切り替わる (AppDelegate.fetch)
+var baseURL = remoteBases.first ?? URL(string: "http://localhost:19877")!
 let remoteToken = remote?.token.flatMap { $0.isEmpty ? nil : $0 }
+let baseURLChanged = Notification.Name("amonBaseURLChanged")
+
+/// いまの接続先が local / global のどちらか (メニューの表示用)
+func remoteKind(_ u: URL) -> String {
+    guard remoteBases.count > 1 else { return "" }
+    return u == remoteBases[0] ? "ローカル" : "グローバル"
+}
 
 /// ブラウザには WebView の Cookie が渡らないので、リモートのときは ?token= を付けて開く (バックエンドが Cookie に移して URL から消す)
 func browserURL(_ url: URL) -> URL {
@@ -169,6 +199,7 @@ final class DashboardViewController: NSViewController, WKNavigationDelegate {
         return WKWebView(frame: .zero, configuration: c)
     }()
     private var currentURL = baseURL
+    private var baseObserver: NSObjectProtocol?
 
     /// ポップオーバーのときだけ「ウィンドウで切り離し」を出す (ウィンドウ自身には要らない)
     var showsDetachButton = false { didSet { detachButton?.isHidden = !showsDetachButton } }
@@ -233,7 +264,20 @@ final class DashboardViewController: NSViewController, WKNavigationDelegate {
 
     private var cookieReady = remoteToken == nil
 
+    /// 接続先がローカル ⇔ グローバルで切り替わったら、同じページを新しいホストで開き直す (Cookie はホストごとなので入れ直す)
+    func followBaseURL() {
+        guard baseObserver == nil else { return }
+        baseObserver = NotificationCenter.default.addObserver(forName: baseURLChanged, object: nil, queue: .main) { [weak self] _ in
+            guard let self else { return }
+            let path = self.currentURL.path.isEmpty ? "/" : self.currentURL.path
+            self.currentURL = URL(string: path, relativeTo: baseURL)?.absoluteURL ?? baseURL
+            self.cookieReady = remoteToken == nil
+            if self.web.url != nil { self.load() }
+        }
+    }
+
     func load() {
+        followBaseURL()
         web.navigationDelegate = self  // ビューを作る前に load されても失敗を拾えるように
         // ダッシュボードの fetch は相対パスでヘッダーを付けられないので、トークンは Cookie で渡す (読み込みより先に入れる)
         if !cookieReady, let t = remoteToken, let host = baseURL.host,
@@ -713,17 +757,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     private var inFlight = false
     private var remoteFailures = 0
 
+    private var lastLocalProbe = Date.distantPast
+
+    /// /status を 1 回読む。ローカルは届かないときにすぐ諦めてグローバルへ回せるよう短く待つ
+    private func getStatus(_ base: URL, done: @escaping (Int?, Status?) -> Void) {
+        var req = URLRequest(url: base.appendingPathComponent("status"))
+        req.timeoutInterval = !isRemote ? 1.5 : (remoteBases.count > 1 && base == remoteBases[0] ? 2 : 5)
+        if let t = remoteToken { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
+        URLSession.shared.dataTask(with: req) { data, resp, _ in
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            let status = code == 200 ? data.flatMap { try? JSONDecoder().decode(Status.self, from: $0) } : nil
+            DispatchQueue.main.async { done(code, status) }
+        }.resume()
+    }
+
+    private func switchBase(to u: URL) {
+        guard u != baseURL else { return }
+        baseURL = u
+        NotificationCenter.default.post(name: baseURLChanged, object: nil)
+    }
+
+    /// リモートで、いまの接続先が読めなかったら残りの候補を順に試す (ローカル → グローバル)。
+    /// グローバルを使っている間も 30 秒おきにローカルを試し、届けばローカルに戻す
+    private func fetchRemote(from i: Int, tried: Int, done: @escaping (Int?, Status?) -> Void) {
+        let base = remoteBases[i]
+        getStatus(base) { [weak self] code, status in
+            guard let self else { return }
+            if status != nil || code == 401 || code == 403 || tried + 1 >= remoteBases.count {
+                if status != nil { self.switchBase(to: base) }
+                done(code, status)
+                return
+            }
+            self.fetchRemote(from: (i + 1) % remoteBases.count, tried: tried + 1, done: done)
+        }
+    }
+
     private func fetch() {
         // VPN 越しは 2 秒を超えることがあるので、前の応答を待っている間は次を投げない (重ねると詰まる)
         if inFlight { return }
         inFlight = true
-        var req = URLRequest(url: baseURL.appendingPathComponent("status"))
-        req.timeoutInterval = isRemote ? 5 : 1.5
-        if let t = remoteToken { req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization") }
-        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
-            let code = (resp as? HTTPURLResponse)?.statusCode
-            let status = code == 200 ? data.flatMap { try? JSONDecoder().decode(Status.self, from: $0) } : nil
-            DispatchQueue.main.async {
+        var start = remoteBases.firstIndex(of: baseURL) ?? 0
+        if isRemote && start > 0 && Date().timeIntervalSince(lastLocalProbe) > 30 {
+            lastLocalProbe = Date()
+            start = 0
+        }
+        let handle: (Int?, Status?) -> Void = { [weak self] code, status in
                 guard let self = self else { return }
                 self.inFlight = false
                 if let status = status {
@@ -746,8 +824,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
                     self.applyBackendDown()
                     self.startBackendIfNeeded()
                 }
-            }
-        }.resume()
+        }
+        if isRemote { fetchRemote(from: start, tried: 0, done: handle) } else { getStatus(baseURL, done: handle) }
     }
 
     // MARK: メニューバーの表示
@@ -1006,9 +1084,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         ni.submenu = ns
         m.addItem(ni)
         if isRemote {
-            let info = NSMenuItem(title: "リモート表示: \(baseURL.host ?? "")", action: nil, keyEquivalent: "")
+            let kind = remoteKind(baseURL)
+            let info = NSMenuItem(title: "リモート表示: \(baseURL.host ?? "")" + (kind.isEmpty ? "" : " (\(kind))"),
+                                  action: nil, keyEquivalent: "")
             info.isEnabled = false
             m.addItem(info)
+            add("接続先…", #selector(editRemote))
             let sub = NSMenu()
             for s in Self.remoteIntervalChoices {
                 let it = NSMenuItem(title: "\(s) 秒ごと", action: #selector(setRemoteInterval(_:)), keyEquivalent: "")
@@ -1023,6 +1104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
         } else {
             add("バックエンドのログを表示", #selector(revealLog))
             add("バックエンドを再起動", #selector(restartBackend))
+            add("別の Mac を見る (リモート表示)…", #selector(editRemote))
         }
         m.addItem(.separator())
         add("終了", #selector(quit), "q")
@@ -1127,6 +1209,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, UNUs
     }
 
     @objc private func quit() {
+        NSApp.terminate(nil)
+    }
+
+    // MARK: 接続先 (リモート表示) の入力
+
+    /// ローカル・グローバル・トークンを入れて保存する。保存したらアプリを起動し直す
+    /// (リモートに切り替えるときは、この Mac のバックエンドを止めてから見に行く必要があるため)
+    @objc private func editRemote() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "記録している Mac を見る (リモート表示)"
+        a.informativeText = "ローカルに届くときはローカル、届かないときはグローバルで接続します (グローバルの間も 30 秒おきにローカルを試します)。"
+            + "どちらか片方だけでもかまいません。http:// とポート (19877) は省けます。トークンは記録している Mac で amon token を実行すると表示されます。"
+        // url だけの古い形は、Tailscale (…ts.net / 100.x) ならグローバル、それ以外はローカルの欄に入れておく
+        var local = remote?.local ?? "", global = remote?.global ?? ""
+        if local.isEmpty && global.isEmpty, let old = remote?.url, let h = URL(string: old)?.host {
+            if h.hasSuffix(".ts.net") || h.hasPrefix("100.") { global = old } else { local = old }
+        }
+        let fields: [(String, String, String)] = [
+            ("ローカル", "名前.local (同じネットワーク)", local),
+            ("グローバル", "…ts.net (Tailscale など)", global),
+            // 保存済みのトークンは欄に出さず (伏せ字でも長さが見えるだけで役に立たない)、空欄のままなら前の値を使い続ける
+            ("トークン", remoteToken == nil ? "amon token の値" : "保存済み (変えるときだけ入力)", ""),
+        ]
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        var inputs: [NSTextField] = []
+        for (i, (label, hint, value)) in fields.enumerated() {
+            let l = NSTextField(labelWithString: label)
+            let f: NSTextField = i == 2 ? NSSecureTextField() : NSTextField()
+            f.placeholderString = hint
+            f.stringValue = value
+            f.frame.size.width = 320
+            f.widthAnchor.constraint(equalToConstant: 320).isActive = true
+            stack.addArrangedSubview(l)
+            stack.addArrangedSubview(f)
+            inputs.append(f)
+        }
+        stack.frame = NSRect(x: 0, y: 0, width: 320, height: 150)
+        a.accessoryView = stack
+        a.window.initialFirstResponder = inputs[0]
+        a.addButton(withTitle: "保存して接続")
+        a.addButton(withTitle: "キャンセル")
+        if isRemote { a.addButton(withTitle: "リモート表示をやめる") }
+        let r = a.runModal()
+        if r == .alertSecondButtonReturn { return }
+        if r == .alertThirdButtonReturn {
+            try? FileManager.default.removeItem(at: remoteFile)
+            relaunch()
+            return
+        }
+        local = inputs[0].stringValue
+        global = inputs[1].stringValue
+        let bad = [local, global].filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty && normalizeRemoteURL($0) == nil }
+        if !bad.isEmpty || (normalizeRemoteURL(local) == nil && normalizeRemoteURL(global) == nil) {
+            let e = NSAlert()
+            e.messageText = bad.isEmpty ? "ローカルかグローバルのどちらかを入れてください" : "アドレスの形が正しくありません: \(bad.joined(separator: ", "))"
+            e.runModal()
+            return
+        }
+        let cfg = RemoteConfig(local: normalizeRemoteURL(local)?.absoluteString, global: normalizeRemoteURL(global)?.absoluteString,
+                               token: { let t = inputs[2].stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        return t.isEmpty ? remoteToken : t }())
+        do {
+            try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+            try JSONEncoder().encode(cfg).write(to: remoteFile)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: remoteFile.path)
+        } catch {
+            let e = NSAlert()
+            e.messageText = "保存できませんでした: \(error.localizedDescription)"
+            e.runModal()
+            return
+        }
+        relaunch()
+    }
+
+    /// 新しいプロセスを立ててから自分を終える (終了時に自分のバックエンドは止まる)
+    private func relaunch() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        try? p.run()
         NSApp.terminate(nil)
     }
 }

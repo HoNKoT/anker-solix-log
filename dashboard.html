@@ -193,6 +193,12 @@ tr+tr td{border-top:1px solid var(--line)}
 .row .ic svg{width:28px;height:28px}
 .row .name{white-space:normal}
 .grow{flex:1;min-width:0}
+.mrow-l{font-weight:600;font-size:calc(12px*var(--fs,1));margin:12px 0 4px}.mrow-l:first-of-type{margin-top:4px}
+.cprow{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.cprow input{flex:2 1 220px;min-width:0;border:1px solid var(--line);background:var(--soft);color:var(--fg);border-radius:6px;
+  padding:5px 8px;font:inherit;font-family:ui-monospace,Menlo,monospace;font-size:calc(12px*var(--fs,1))}
+.cprow .lb{flex:1 1 140px;color:var(--sub);font-size:calc(11px*var(--fs,1))}
+.okm{color:var(--in)}.ngm{color:var(--out)}
 .note{color:var(--sub);font-size:calc(12px*var(--fs,1));line-height:1.55}
 .err{color:var(--low);font-size:calc(12px*var(--fs,1));margin-top:6px}
 .okmsg{color:var(--in);font-size:calc(12px*var(--fs,1));margin-top:6px}
@@ -294,6 +300,13 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
     <div class="note" style="margin-top:8px">C2000 Gen 2 は Bluetooth ライブラリが未対応のため「試験的」(C1000 Gen 2 のクラス流用) です。見つからない・つながらないときは、下の診断で周りの機器を全部見てみてください。確実に読むなら上のクラウドが使えます。</div>
     <div class="bar" style="margin-top:8px"><button class="btn ghost sm" id="diag-btn">診断: 周りのBluetoothを全部見る</button><span class="sub" id="diag-state"></span></div>
     <div id="diag-res"></div>
+  </div>
+  <div class="card pad" id="mac-card">
+    <h3>この Mac</h3>
+    <div class="mrow-l">この Mac を開くアドレス</div>
+    <div id="mac-addr"><div class="note">調べています…</div></div>
+    <div class="mrow-l">ターミナルの PATH</div>
+    <div id="mac-path"><div class="note">調べています…</div></div>
   </div>
 </section>
 
@@ -1006,6 +1019,35 @@ function renderScan(){
   }
 }
 const CLOUD_STATE={unconfigured:['未設定',''],connecting:['接続中…',''],connected:['接続中','ok'],auth_error:['ログイン失敗','bad'],limited:['回数制限','bad'],error:['エラー','bad'],missing_lib:['部品が未導入','bad']};
+/* ───────── この Mac (アドレスと PATH。gqm の設定画面と同じ作り) ───────── */
+async function copyText(txt,btn){
+  const done=()=>{if(!btn)return;const t=btn.textContent;btn.textContent='✓ コピー済み';setTimeout(()=>btn.textContent=t,1500)};
+  try{await navigator.clipboard.writeText(txt);done()}
+  catch(e){const ta=el('textarea');ta.value=txt;ta.style.position='fixed';ta.style.opacity='0';document.body.append(ta);ta.select();
+    try{document.execCommand('copy');done()}catch(_){}ta.remove()}}
+function cpRow(val,label){const r=el('div','cprow');const i=el('input');i.readOnly=true;i.value=val;i.onclick=()=>i.select();
+  const b=el('button','btn ghost sm','コピー');b.onclick=()=>copyText(val,b);r.append(i,b);if(label)r.append(el('span','lb',label));return r}
+async function loadThisMac(){
+  const ab=$('mac-addr'),pb=$('mac-path');
+  try{const r=await api('/api/this-mac');ab.replaceChildren();for(const a of r.addresses)ab.append(cpRow(a.url,a.label));
+    ab.append(el('div','note',r.lan
+      ?'.local は同じ Wi-Fi・LAN の中だけ、Tailscale の名前は離れた場所からも開けます。'+(r.token?'ほかの端末から開くときはトークンを聞かれます (amon token で表示)。':'トークンが未設定なので、同じネットワークの誰でも見られます (amon token new)。')
+      :'いまは LAN に公開していないので、開けるのはこの Mac (localhost) からだけです。ほかの端末から見るには amon lan on。'))}
+  catch(e){ab.replaceChildren(el('div','note','調べられませんでした'))}
+  renderShellPath(pb)}
+async function renderShellPath(pb){
+  let s;try{s=await api('/api/shell-path')}catch(e){pb.replaceChildren(el('div','note','調べられませんでした'));return}
+  pb.replaceChildren();const st=el('div','note');
+  st.innerHTML=s.login_path==null?'新しいターミナルの PATH を読めませんでした'
+    :(s.amon_on_path?'<span class="okm">✓ 新しいターミナルで amon コマンドが使えます</span>'
+      :s.amon_linked.length?'<span class="ngm">✗ amon のリンクはありますが、新しいターミナルの PATH に入っていません</span>'
+      :'<span class="ngm">✗ amon コマンドのリンクがありません (このフォルダで ./amon link)</span>');
+  const row=cpRow(s.line);const add=el('button','btn ghost sm',s.zshrc_has?'~/.zshrc に追加済み':'~/.zshrc に追加');add.disabled=s.zshrc_has;
+  add.onclick=async()=>{add.disabled=true;add.textContent='書いています…';try{await post('/api/shell-path',{});renderShellPath(pb)}catch(e){add.textContent='書けませんでした: '+e.message}};
+  row.append(add);
+  const help=el('div','note');help.innerHTML='どのフォルダからでも <code>amon</code> と打てるようにする 1 行です。「追加」は ~/.zshrc の最後に書きます (amon が前に書いた行は置き換え。元のファイルは ~/.zshrc.amon-bak)。反映は新しく開いたターミナルから。'
+    +(s.login_path?`<details style="margin-top:4px"><summary>いまの PATH を見る</summary><code style="word-break:break-all">${s.login_path.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</code></details>`:'');
+  pb.append(st,row,help)}
 async function loadCloud(){try{S.cloud=await api('/api/cloud')}catch(e){S.cloud=null}renderCloud()}
 function renderCloud(){
   const box=$('cloud-body'),c=S.cloud;
@@ -1071,7 +1113,7 @@ function setTab(t){
   document.title='Anker Monitor — '+{now:'いま',history:'履歴',devices:'機器'}[t];
   if(t==='now'){updateNow();refreshNow()}
   if(t==='history')initHistory();
-  if(t==='devices'){renderDevices(true);loadCloud()}
+  if(t==='devices'){renderDevices(true);loadCloud();loadThisMac()}
 }
 /* ───────── 文字の大きさ (GQM と同じ: ボタン / ⌘+ ⌘- ⌘0。覚えておく) ───────── */
 const FS_STEPS=[0.85,1,1.15,1.3,1.5,1.75];

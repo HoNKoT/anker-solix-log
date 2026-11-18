@@ -40,7 +40,9 @@ import logging
 import math
 import os
 import random
+import re
 import signal
+import subprocess
 import sqlite3
 import threading
 import time
@@ -151,6 +153,100 @@ def api_token() -> str | None:
         return None
     return t or None
 DEFAULT_SETTINGS = {"price_per_kwh": 39.5, "sample_interval": 10}
+
+
+# ── この Mac を開くアドレスと、ターミナルの PATH (「機器」タブの「この Mac」に出す。gqm と同じ作り) ──
+TAILSCALE_CLIS = ("/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale")
+_addr_cache: dict = {"at": 0.0, "v": None}
+
+
+def this_mac_addresses(port: int) -> list[dict]:
+    """[{kind, label, url}]。kind = local / lan (名前.local) / tailscale (MagicDNS の名前) / ip。60 秒キャッシュ"""
+    now = time.time()
+    if _addr_cache["v"] is not None and now - _addr_cache["at"] < 60:
+        return _addr_cache["v"]
+    out = [{"kind": "local", "label": "この Mac から", "url": f"http://localhost:{port}"}]
+    try:
+        name = subprocess.check_output(["/usr/sbin/scutil", "--get", "LocalHostName"], text=True,
+                                       stderr=subprocess.DEVNULL, timeout=2).strip()
+        if name:
+            out.append({"kind": "lan", "label": "同じネットワークから (Bonjour)", "url": f"http://{name}.local:{port}"})
+    except Exception:
+        pass
+    for cli in TAILSCALE_CLIS:
+        if not os.path.exists(cli):
+            continue
+        try:
+            d = json.loads(subprocess.check_output([cli, "status", "--json"], text=True,
+                                                   stderr=subprocess.DEVNULL, timeout=4))
+            dns = ((d.get("Self") or {}).get("DNSName") or "").rstrip(".")
+            if dns and d.get("BackendState") == "Running":
+                out.append({"kind": "tailscale", "label": "外出先から (Tailscale)", "url": f"http://{dns}:{port}"})
+        except Exception:
+            pass
+        break
+    try:
+        iface = None
+        for line in subprocess.check_output(["/sbin/ifconfig"], text=True, stderr=subprocess.DEVNULL,
+                                            timeout=2).splitlines():
+            if line and not line[0].isspace():
+                iface = line.split(":", 1)[0]
+                continue
+            m = re.match(r"\s+inet (\d+\.\d+\.\d+\.\d+)", line)
+            # en* (Wi-Fi・有線) だけ。169.254 は相手が見つからないときの仮の番号なので出さない
+            if m and iface and iface.startswith("en") and not m.group(1).startswith("169.254."):
+                out.append({"kind": "ip", "label": f"IP アドレス ({iface}。変わることがあります)",
+                            "url": f"http://{m.group(1)}:{port}"})
+    except Exception:
+        pass
+    _addr_cache.update(at=now, v=out)
+    return out
+
+
+ZSHRC = Path.home() / ".zshrc"
+AMON_PATH_MARK = "# amon (Anker Monitor)"  # amon link が書く印と同じ
+AMON_PATH_LINE = 'export PATH="$HOME/.local/bin:$PATH"'
+
+
+def shell_path_status() -> dict:
+    """新しいターミナル (zsh のログインシェル) で amon コマンドが見つかるか"""
+    try:
+        rc = ZSHRC.read_text()
+    except OSError:
+        rc = ""
+    path = None
+    try:
+        # -i で ~/.zshrc も読む。起動時の表示が混ざることがあるので最後の行だけ使う
+        lines = subprocess.check_output(["/bin/zsh", "-l", "-i", "-c", 'print -r -- "$PATH"'], text=True,
+                                        stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                        timeout=8).strip().splitlines()
+        path = lines[-1] if lines else None
+    except Exception:
+        pass
+    dirs = path.split(":") if path else []
+    linked = [d for d in ("/opt/homebrew/bin", "/usr/local/bin", str(Path.home() / ".local" / "bin"))
+              if (Path(d) / "amon").exists()]
+    return {"line": AMON_PATH_LINE, "zshrc_has": AMON_PATH_LINE in rc, "login_path": path,
+            "amon_linked": linked, "amon_on_path": any(d in dirs for d in linked)}
+
+
+def apply_shell_path() -> dict:
+    """~/.zshrc に AMON_PATH_LINE を書く。amon が前に書いた行 (印の次の export PATH) があれば置き換え、無ければ末尾に足す"""
+    try:
+        rc = ZSHRC.read_text()
+    except FileNotFoundError:
+        rc = ""
+    lines = rc.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == AMON_PATH_MARK and i + 1 < len(lines) and lines[i + 1].startswith("export PATH="):
+            lines[i + 1] = AMON_PATH_LINE
+            break
+    else:
+        lines += ["", AMON_PATH_MARK, AMON_PATH_LINE]
+    if rc:
+        (ZSHRC.parent / ".zshrc.amon-bak").write_text(rc)
+    ZSHRC.write_text("\n".join(lines) + "\n")
+    return {"ok": True, **shell_path_status()}
 
 
 def load_settings() -> dict:
@@ -2143,6 +2239,11 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                                 "daily": mgr.db.savings_rows(t0, t1, q.get("dev") or None),
                                 "weather": mgr.db.weather_rows(d0, d1)})
                     self._json(out)
+                elif u.path == "/api/this-mac":  # 「機器」タブの「この Mac」(このMacからだけ)
+                    self._json({"addresses": this_mac_addresses(self.server.server_address[1]),
+                                "lan": LAN_FLAG.exists(), "token": TOKEN_FILE.exists()})
+                elif u.path == "/api/shell-path":
+                    self._json(shell_path_status())
                 elif u.path == "/api/weather-hourly":
                     self._json(weather_hourly())
                 elif u.path == "/api/geocode":  # 天気の場所を地名で探す (設定はこのMacからだけなので、ここも同じ)
@@ -2181,7 +2282,9 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                 return
             u, b = urlparse(self.path), self._body()
             try:
-                if u.path == "/api/devices":
+                if u.path == "/api/shell-path":
+                    self._json(apply_shell_path())
+                elif u.path == "/api/devices":
                     address, name, model = b.get("address"), (b.get("name") or "").strip(), b.get("model")
                     cloud_sn = b.get("cloud_sn")
                     if not (address or cloud_sn) or not name:

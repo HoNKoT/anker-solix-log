@@ -125,6 +125,8 @@ Bluetooth は Mac の近くでしか読めません。Wi-Fi につながった�
 ./amon token new     # このMac以外から読むときのトークンを作る (amon token で表示 / off でやめる)
 ./amon remote <URL> <トークン>   # (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
 ./amon get '/api/raw?hours=48'   # API を読んで JSON を出す。リモート表示中なら記録している Mac からトークン付きで (解析用)
+./amon url            # この Mac を開くアドレス (localhost / 名前.local / Tailscale の名前 / IP)。deploy の最後にも出る
+./amon env            # どこからでも amon と打てるようにする PATH の行 (amon env >> ~/.zshrc)
 ```
 
 ## うまくいかないとき
@@ -290,10 +292,13 @@ git clone https://github.com/HoNKoT/anker-solix-log.git && cd anker-solix-log
 git clone https://github.com/HoNKoT/anker-solix-log.git && cd anker-solix-log
 # <トークン> は記録している Mac で ./amon token を実行して表示される値 (amon remote が取りに行くことはしない)
 ./amon remote 100.x.y.z <トークン>    # URL は http:// と :19877 を省略可。MagicDNS の名前 (mac.xxx.ts.net) でも可
-./amon status                          # 読めているか確認
+./amon remote local mac-mini.local     # 同じネットワークでのアドレスも覚えさせる (届くときはこちらを優先)
+./amon remote global mac.xxx.ts.net    # 外からのアドレス (ローカルに届かないときに使う)
+./amon status                          # 読めているか確認 (いま使っている接続先も出ます)
 ./amon remote off                      # やめる (この Mac で記録する通常の動きに戻す)
 ```
 
+- ローカルとグローバルを両方覚えさせると、ローカルに届くときはローカル、届かないときはグローバルで接続します。グローバルの間も 30 秒おきにローカルを試し、届けば戻ります。メニューバーの右クリック →「接続先…」(リモート表示でないときは「別の Mac を見る (リモート表示)…」) からも入力・変更できます。`amon remote <URL>` は …ts.net と 100.x をグローバル、それ以外をローカルとして覚えます。
 - 見る側でコードを更新したら (`git pull`)、`amon deploy` でアプリを作り直します (リモート表示のときはアプリだけ作ります)。
 - `amon get <パス>` は、記録している Mac の API を JSON のまま読みます (トークンは remote.json から読み、画面にもコマンドの引数にも出しません)。解析用の `/api/raw` は、間引いていない log の全列 (ポート別・Transfer・ロス) と日ごとの集計を返します。`dev=<機器ID>`、`from`/`to` (UNIX 秒) または `hours`、`limit` (既定 20000 行) で絞れます。Claude Code などに `amon get '/api/raw?hours=24'` を実行させれば、機器の記録を読んで調べてもらえます。
 - 見る側に Python や部品は要りません (`amon remote` はアプリだけビルドします。Xcode Command Line Tools は必要です)。設定は `~/.anker-monitor/remote.json` (0600) に入ります。

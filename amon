@@ -13,6 +13,10 @@
 #   amon lan on|off   スマホなど同じ Wi-Fi の端末から見られるようにする (見るだけ。URL を表示)
 #   amon token [new|off]  このMac以外から読むときのトークン (表示 / 作り直し / やめる)
 #   amon remote <URL> <トークン>  (見る側の Mac で) 記録している Mac をメニューバーで見る。off で戻す
+#   amon remote local|global <URL>  ローカル (名前.local) とグローバル (…ts.net) を別々に覚える。ローカル優先で接続
+#   amon remote token <トークン>     トークンだけ変える (メニューの「接続先…」からも設定できます)
+#   amon url          この Mac を開くアドレス (localhost / 名前.local / Tailscale の名前 / IP)。deploy の最後にも出る
+#   amon env          どこからでも amon と打てるようにする PATH の行を出す (amon env >> ~/.zshrc)
 #   amon get <パス>   API を読んで JSON を出す (リモート表示中なら記録している Mac から、トークン付きで)
 #                     例: amon get '/api/raw?hours=48'  /api/raw?dev=<id>&from=<UNIX秒>&to=<UNIX秒>
 #   amon cloud-setup  クラウド(Wi-Fi経由)で読む部品を入れる (Python 3.12 以上が必要。足りなければ環境を作り直す)
@@ -62,8 +66,37 @@ find_python() {
 
 backend_up() { curl -fsS --max-time 2 "http://localhost:$PORT/status" >/dev/null 2>&1; }
 is_remote() { [ -f "$REMOTE_FILE" ]; }
-remote_get() {  # remote.json の項目 (url / token) を読む
+remote_get() {  # remote.json の項目 (local / global / token) を読む
   /usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$REMOTE_FILE" "$1" 2>/dev/null
+}
+norm_url() {  # 名前 / 名前:ポート / http://… を http://名前:ポート にそろえる
+  local u="$1"
+  [ -n "$u" ] || return 0
+  case "$u" in http://*|https://*) ;; *) u="http://$u" ;; esac
+  u="${u%/}"
+  case "${u#*://}" in *:*) ;; *) u="$u:$PORT" ;; esac
+  echo "$u"
+}
+remote_urls() {  # 接続先の候補を ローカル → グローバル の順に (url は 1 つだけ持っていた頃の形)
+  local l g; l="$(remote_get local)"; g="$(remote_get global)"
+  if [ -n "$l$g" ]; then [ -n "$l" ] && echo "$l"; [ -n "$g" ] && echo "$g"; else remote_get url; fi
+}
+# いま届く接続先を 1 つ選ぶ。ローカルは届かないときにすぐ諦められるよう 2 秒だけ待つ
+# (401/403 も「届いた」に数える: トークン違いはグローバルに回しても直らないため)
+remote_pick() {
+  local u first="" tok code; tok="$(remote_get token)"
+  for u in $(remote_urls); do
+    [ -n "$first" ] || first="$u"
+    code="$(printf 'header = "Authorization: Bearer %s"\n' "$tok" | curl -s -o /dev/null -w '%{http_code}' \
+      --max-time "$([ "$u" = "$first" ] && echo 2 || echo 5)" -K - "$u/status")"
+    [ "$code" != "000" ] && { echo "$u"; return 0; }
+  done
+  echo "$first"
+}
+remote_label() {  # 表示用: local と global を並べる
+  local l g; l="$(remote_get local)"; g="$(remote_get global)"
+  [ -n "$l$g" ] || { remote_get url; return; }
+  echo "ローカル ${l:-なし} / グローバル ${g:-なし}"
 }
 app_running() { pgrep -f "$APP_BIN" >/dev/null 2>&1; }
 
@@ -103,7 +136,7 @@ cmd_start() {
   open "$APP"
   local i
   if is_remote; then
-    for i in 1 2 3 4 5; do app_running && { ok "起動しました (リモート表示: $(remote_get url))"; return 0; }; sleep 1; done
+    for i in 1 2 3 4 5; do app_running && { ok "起動しました (リモート表示: $(remote_label))"; return 0; }; sleep 1; done
     warn "アプリが起動しません"; return 1
   fi
   for i in 1 2 3 4 5 6 7 8; do backend_up && { ok "起動しました (メニューバーを見てください)"; return 0; }; sleep 1; done
@@ -146,15 +179,38 @@ cmd_deploy() {
   cmd_stop
   install_python_side || return 1
   build_app || return 1
-  cmd_start
+  cmd_start && cmd_url
+}
+
+# この Mac を開くアドレス (バックエンドの /api/this-mac と同じもの。ダッシュボードの「機器」タブ > この Mac にも出る)
+cmd_url() {
+  if is_remote; then say "リモート表示: $(remote_label)"; return 0; fi
+  local j; j="$(curl -fsS --max-time 10 "http://localhost:$PORT/api/this-mac" 2>/dev/null)" \
+    || { warn "バックエンドが応答しません (amon logs で様子を見てください)"; return 1; }
+  echo "$j" | /usr/bin/python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print("この Mac を開くアドレス:")
+for a in d["addresses"]:
+    print("  %-34s %s" % (a["url"], a["label"]))
+if not d["lan"]:
+    print("  (いまは LAN に公開していないので、開けるのは localhost だけです。ほかの端末からは amon lan on)")
+'
+}
+
+# どこからでも amon と打てるようにする 1 行 (amon env >> ~/.zshrc でも足せる)
+cmd_env() {
+  echo '# amon (Anker Monitor)'
+  echo 'export PATH="$HOME/.local/bin:$PATH"'
 }
 
 cmd_status() {
   if app_running; then ok "メニューバーアプリ: 起動中"; else warn "メニューバーアプリ: 停止"; fi
   if is_remote; then
-    local url tok; url="$(remote_get url)"; tok="$(remote_get token)"
-    say "リモート表示: $url"
-    curl -fsS --max-time 5 ${tok:+-H "Authorization: Bearer $tok"} "$url/status" | /usr/bin/python3 -c '
+    local url tok; url="$(remote_pick)"; tok="$(remote_get token)"
+    say "リモート表示: $(remote_label)"
+    say "使っている接続先: $url"
+    printf 'header = "Authorization: Bearer %s"\n' "$tok" | curl -fsS --max-time 5 -K - "$url/status" | /usr/bin/python3 -c '
 import json, sys
 for d in json.load(sys.stdin)["devices"]:
     print("   %s [%s]  バッテリー %s%%  入力 %sW  出力 %sW" % (d.get("name") or d["id"], d.get("state"), d.get("battery"), d.get("power_in"), d.get("power_out")))
@@ -214,33 +270,70 @@ cmd_token() {
   esac
 }
 
+# remote.json の 1 項目を書き換える (url だけの古い形はここで local / global に振り分ける)
+remote_set() {
+  mkdir -p "$DATA"
+  ( umask 077; /usr/bin/python3 - "$REMOTE_FILE" "$1" "$2" <<'PY'
+import json, re, sys
+path, key, val = sys.argv[1:]
+try: d = json.load(open(path))
+except Exception: d = {}
+old = d.pop("url", None)
+if old and not d.get("local") and not d.get("global"):
+    host = re.sub(r"^https?://", "", old).split(":")[0]
+    d["global" if host.endswith(".ts.net") or host.startswith("100.") else "local"] = old
+d[key] = val
+json.dump({k: v for k, v in d.items() if v}, open(path, "w"))
+PY
+  ) || { err "設定を保存できませんでした"; return 1; }
+  chmod 600 "$REMOTE_FILE"  # umask は新しく作るときしか効かない (前からあるファイルの権限は変わらない)
+}
+
+remote_check() {  # $1 = URL。届くかを見て結果を言う (保存はする)
+  local tok code; tok="$(remote_get token)"
+  say "接続を確認中: $1"
+  code="$(printf 'header = "Authorization: Bearer %s"\n' "$tok" | curl -s -o /dev/null -w '%{http_code}' --max-time 5 -K - "$1/status")"
+  case "$code" in
+    200) ok "読めました" ;;
+    401) warn "トークンが違います (記録している Mac で amon token を確認 → amon remote token <値>)" ;;
+    403) warn "断られました (403)。記録している Mac で amon lan on にしてください" ;;
+    *)   warn "いまは届きません (HTTP $code)。設定は保存します" ;;
+  esac
+}
+
+remote_apply() {
+  ok "リモート表示: $(remote_label)。この Mac では Bluetooth もバックエンドも動かしません ($REMOTE_FILE)"
+  cmd_stop
+  build_app || return 1  # 古いアプリにはリモート表示が無いので、毎回作り直す
+  cmd_start
+}
+
 cmd_remote() {
   case "${1:-}" in
     off)
       rm -f "$REMOTE_FILE"; ok "リモート表示をやめました (この Mac で記録します)"
       cmd_stop; cmd_start ;;
     "")
-      if is_remote; then ok "リモート表示: $(remote_get url)"; else say "リモート表示: オフ (この Mac で記録しています)"; fi ;;
+      if is_remote; then ok "リモート表示: $(remote_label)"; say "使える接続先: $(remote_pick)"
+      else say "リモート表示: オフ (この Mac で記録しています)"; fi ;;
+    local|global)
+      local key="$1" url; url="$(norm_url "${2:-}")"
+      if [ -z "$url" ]; then remote_set "$key" "" && ok "$key を消しました"; else remote_set "$key" "$url" || return 1; remote_check "$url"; fi
+      is_remote && [ -n "$(remote_urls)" ] && remote_apply ;;
+    token)
+      [ -n "${2:-}" ] || { err "使い方: amon remote token <トークン>"; return 1; }
+      remote_set token "$2" || return 1
+      local u; for u in $(remote_urls); do remote_check "$u"; done
+      [ -n "$(remote_urls)" ] && remote_apply ;;
     *)
-      local url="$1" tok="${2:-}"
-      case "$url" in http://*|https://*) ;; *) url="http://$url" ;; esac
-      url="${url%/}"
-      case "${url#*://}" in *:*) ;; *) url="$url:$PORT" ;; esac
-      say "接続を確認中: $url"
-      local code; code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 ${tok:+-H "Authorization: Bearer $tok"} "$url/status")"
-      case "$code" in
-        200) ok "読めました" ;;
-        401) err "トークンが違います (記録している Mac で amon token を確認)"; return 1 ;;
-        403) err "断られました (403)。記録している Mac で amon lan on にしてください"; return 1 ;;
-        *)   warn "応答がありません (HTTP $code)。Tailscale と記録している Mac を確認してください。設定は保存します" ;;
-      esac
-      mkdir -p "$DATA"
-      ( umask 077; /usr/bin/python3 -c 'import json,sys; json.dump({"url": sys.argv[1], "token": sys.argv[2]}, open(sys.argv[3], "w"))' \
-          "$url" "$tok" "$REMOTE_FILE" ) || { err "設定を保存できませんでした"; return 1; }
-      ok "リモート表示にしました。この Mac では Bluetooth もバックエンドも動かしません ($REMOTE_FILE)"
-      cmd_stop
-      build_app || return 1  # 古いアプリにはリモート表示が無いので、毎回作り直す
-      cmd_start ;;
+      # amon remote <URL> [トークン]: .ts.net と 100.x (Tailscale) はグローバル、それ以外はローカルとして覚える
+      local url key; url="$(norm_url "$1")"
+      case "${url#*://}" in *.ts.net*|100.*) key=global ;; *) key=local ;; esac
+      [ -n "${2:-}" ] && { remote_set token "$2" || return 1; }
+      remote_set "$key" "$url" || return 1
+      say "$( [ $key = local ] && echo ローカル || echo グローバル ) として保存しました"
+      remote_check "$url"
+      remote_apply ;;
   esac
 }
 
@@ -315,7 +408,7 @@ cmd_get() {
   [ -n "$path" ] || { err "使い方: amon get '/api/raw?hours=48'"; return 1; }
   case "$path" in /*) ;; *) path="/$path" ;; esac
   if is_remote; then
-    local url tok; url="$(remote_get url)"; tok="$(remote_get token)"
+    local url tok; url="$(remote_pick)"; tok="$(remote_get token)"
     printf 'header = "Authorization: Bearer %s"\n' "$tok" | curl -fsS --max-time 60 -K - "$url$path"
   else
     curl -fsS --max-time 60 "http://localhost:$PORT$path"
@@ -342,6 +435,8 @@ case "${1:-}" in
   token)     shift; cmd_token "${1:-}" ;;
   remote)    shift; cmd_remote "$@" ;;
   get)       shift; cmd_get "${1:-}" ;;
+  url)       cmd_url ;;
+  env)       cmd_env ;;
   autostart) shift; cmd_autostart "${1:-}" ;;
   *)         usage ;;
 esac
