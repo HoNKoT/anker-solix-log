@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.ankermonitor.shared.Connection
@@ -44,9 +45,9 @@ import app.ankermonitor.shared.batteryPercent
 import app.ankermonitor.shared.displayName
 import app.ankermonitor.shared.feedLabels
 import app.ankermonitor.shared.hasReading
-import app.ankermonitor.shared.inputWatts
+import app.ankermonitor.shared.flowInWatts
 import app.ankermonitor.shared.label
-import app.ankermonitor.shared.outputWatts
+import app.ankermonitor.shared.flowOutWatts
 import app.ankermonitor.shared.powerFlow
 import app.ankermonitor.shared.stateLabel
 import app.ankermonitor.shared.transferLabel
@@ -130,7 +131,7 @@ private fun NowContent(connection: Connection, state: MonitorState, hourly: Hour
         item {
             val fetched = state.fetchedAtMillis?.let { formatClock(it, withSeconds = true) }
             Text(
-                text = connection.url + (fetched?.let { "  ·  $it 更新" } ?: ""),
+                text = connectionLabel(connection, state.baseUrl) + (fetched?.let { "  ·  $it 更新" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -160,12 +161,16 @@ private fun DeviceCard(device: Device) {
                     Text(
                         flow.label,
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (flow == PowerFlow.CHARGING) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = when (flow) {
+                            PowerFlow.CHARGING -> flowInColor()
+                            PowerFlow.DISCHARGING -> flowOutColor()
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        },
                         modifier = Modifier.padding(bottom = 6.dp),
                     )
                 }
                 LinearProgressIndicator(progress = { pct.coerceIn(0, 100) / 100f }, modifier = Modifier.fillMaxWidth())
-                Text("入力 ${device.inputWatts} W   出力 ${device.outputWatts} W", style = MaterialTheme.typography.bodyLarge)
+                FlowRow(device)
                 device.transferLabel?.let {
                     Text(it, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.tertiary)
                 }
@@ -196,4 +201,36 @@ private fun ConnectionChip(device: Device) {
         else -> ""
     }
     AssistChip(onClick = {}, label = { Text(device.stateLabel + if (device.hasReading) via else "") })
+}
+
+/** いま読めている接続先。両方あるときはローカル / グローバルのどちらで読めたかも出す */
+private fun connectionLabel(connection: Connection, baseUrl: String?): String {
+    val url = baseUrl?.takeIf { it.isNotEmpty() } ?: connection.candidates.firstOrNull().orEmpty()
+    if (connection.localUrl.isEmpty() || connection.globalUrl.isEmpty()) return url
+    val kind = if (url == connection.localUrl) "ローカル" else "グローバル"
+    return "$kind $url"
+}
+
+/** ダッシュボードと同じく、入力 (緑) が機器へ流れ込み、出力 (オレンジ) が流れ出る矢印。0 W の側は灰色で止める */
+@Composable
+private fun FlowRow(device: Device) {
+    val inW = device.flowInWatts
+    val outW = device.flowOutWatts
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        FlowWatts("入力", inW, if (inW >= 1) flowInColor() else flowOffColor())
+        Spacer(Modifier.width(8.dp))
+        FlowArrow(on = inW >= 1, color = flowInColor())
+        Spacer(Modifier.weight(1f))
+        FlowArrow(on = outW >= 1, color = flowOutColor())
+        Spacer(Modifier.width(8.dp))
+        FlowWatts("出力", outW, if (outW >= 1) flowOutColor() else flowOffColor())
+    }
+}
+
+@Composable
+private fun FlowWatts(label: String, watts: Int, color: Color) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$watts W", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
+    }
 }

@@ -120,13 +120,12 @@ class MainViewModel(
     }
 
     // 初回は保存した瞬間に設定画面が消えて呼び出し元のスコープが止まるので、続きの保存は viewModelScope で最後までやる
-    suspend fun testAndSave(urlInput: String, tokenInput: String): SaveResult =
-        viewModelScope.async { checkAndSave(urlInput, tokenInput) }.await()
+    suspend fun testAndSave(localInput: String, globalInput: String, tokenInput: String): SaveResult =
+        viewModelScope.async { checkAndSave(localInput, globalInput, tokenInput) }.await()
 
-    private suspend fun checkAndSave(urlInput: String, tokenInput: String): SaveResult {
-        val url = normalizeServerUrl(urlInput)
-        if (url.isEmpty()) return SaveResult.Rejected("接続先を入れてください")
-        val candidate = Connection(url, tokenInput.trim())
+    private suspend fun checkAndSave(localInput: String, globalInput: String, tokenInput: String): SaveResult {
+        val candidate = Connection(normalizeServerUrl(localInput), normalizeServerUrl(globalInput), tokenInput.trim())
+        if (candidate.candidates.isEmpty()) return SaveResult.Rejected("ローカルかグローバルの接続先を入れてください")
         return when (val result = api.fetchStatus(candidate)) {
             is FetchResult.Success -> {
                 storage.saveConnection(candidate)

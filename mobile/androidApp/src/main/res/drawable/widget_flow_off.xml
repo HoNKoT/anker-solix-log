@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- W が 0 のときの止まった矢印 (ダッシュボードの .farrow の opacity .25) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="11dp"
+    android:viewportWidth="44"
+    android:viewportHeight="30">
+    <path
+        android:pathData="M5,4l11,11L5,26"
+        android:strokeColor="@color/flow_off"
+        android:strokeAlpha="0.25"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M17,4l11,11 -11,11"
+        android:strokeColor="@color/flow_off"
+        android:strokeAlpha="0.25"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M29,4l11,11 -11,11"
+        android:strokeColor="@color/flow_off"
+        android:strokeAlpha="0.25"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

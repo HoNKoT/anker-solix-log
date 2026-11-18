@@ -1,6 +1,8 @@
 package app.ankermonitor.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.tooling.preview.Preview
 import app.ankermonitor.shared.Connection
 import app.ankermonitor.shared.Device
@@ -21,7 +23,7 @@ import app.ankermonitor.shared.summarizeEnergy
 
 /** Preview とスクリーンショットテスト用の見本 (値は anker_monitor.py の /status の形に合わせている) */
 object PreviewSamples {
-    val connection = Connection("http://100.64.1.2:19877", "token")
+    val connection = Connection("http://my-mac.local:19877", "http://my-mac.tailnet.ts.net:19877", "token")
 
     // 2026-11-15 12:34:56 (UTC)。表示は端末のタイムゾーンで変わる
     const val FETCHED_AT = 1_763_210_096_000L
@@ -146,13 +148,13 @@ fun MonitorScreenEmptyPreview() = AnkerTheme(dark = false, dynamicColor = false)
 @Preview
 @Composable
 fun SetupScreenPreview() = AnkerTheme(dark = false, dynamicColor = false) {
-    SetupScreen(initial = null, onSave = { _, _ -> SaveResult.Saved }, onDone = {}, onCancel = null)
+    SetupScreen(initial = null, onSave = { _, _, _ -> SaveResult.Saved }, onDone = {}, onCancel = null)
 }
 
 @Preview
 @Composable
 fun SetupScreenFilledPreview() = AnkerTheme(dark = false, dynamicColor = false) {
-    SetupScreen(initial = PreviewSamples.connection, onSave = { _, _ -> SaveResult.Saved }, onDone = {}, onCancel = {})
+    SetupScreen(initial = PreviewSamples.connection, onSave = { _, _, _ -> SaveResult.Saved }, onDone = {}, onCancel = {})
 }
 
 @Preview
@@ -195,7 +197,8 @@ fun EnergyScreenOpenDarkPreview() = AnkerTheme(dark = true, dynamicColor = false
 }
 
 /** スクリーンショットテストで回す一覧 (名前はファイル名になる) */
-val screenshotPreviews: List<Pair<String, @Composable () -> Unit>> = listOf(
+// 画像にする側 (Roborazzi) は描画が落ち着くのを待つので、流れ続ける矢印 (FlowArrow) は Preview と同じく止めて描く
+val screenshotPreviews: List<Pair<String, @Composable () -> Unit>> = listOf<Pair<String, @Composable () -> Unit>>(
     "monitor" to { MonitorScreenPreview() },
     "monitor_dark" to { MonitorScreenDarkPreview() },
     "monitor_unreachable" to { MonitorScreenUnreachablePreview() },
@@ -206,4 +209,6 @@ val screenshotPreviews: List<Pair<String, @Composable () -> Unit>> = listOf(
     "energy_open_dark" to { EnergyScreenOpenDarkPreview() },
     "setup" to { SetupScreenPreview() },
     "setup_filled" to { SetupScreenFilledPreview() },
-)
+).map { (name, content) ->
+    name to @Composable { CompositionLocalProvider(LocalInspectionMode provides true) { content() } }
+}

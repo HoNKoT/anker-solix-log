@@ -10,6 +10,8 @@ data class MonitorState(
     val fetchedAtMillis: Long? = null,
     val problem: Problem? = null,
     val loading: Boolean = true,
+    /** 最後に読めた接続先 (ローカル / グローバル) */
+    val baseUrl: String? = null,
 )
 
 /**
@@ -33,7 +35,7 @@ class StatusPoller(
                 is FetchResult.Success -> {
                     failures = 0
                     onSuccess(result.status)
-                    MonitorState(result.status, currentTimeMillis(), null, loading = false)
+                    MonitorState(result.status, currentTimeMillis(), null, loading = false, baseUrl = result.baseUrl)
                 }
                 is FetchResult.Unreachable -> {
                     failures++

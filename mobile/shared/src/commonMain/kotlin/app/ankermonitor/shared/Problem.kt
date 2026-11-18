@@ -18,7 +18,7 @@ sealed interface Problem {
         override val message = buildString {
             append("記録している Mac に接続できません")
             if (code != null) append(" (HTTP $code)")
-            append("。スマホと Mac の Tailscale がオンか、Mac がスリープしていないか確認してください")
+            append("。同じネットワークにいるか、スマホと Mac の Tailscale がオンか、Mac がスリープしていないか確認してください")
         }
     }
 }
@@ -26,6 +26,6 @@ sealed interface Problem {
 fun FetchResult.problem(connection: Connection): Problem? = when (this) {
     is FetchResult.Success -> null
     FetchResult.Unauthorized -> Problem.WrongToken
-    FetchResult.Forbidden -> Problem.Refused(hostOf(connection.url))
+    FetchResult.Forbidden -> Problem.Refused(connection.candidates.joinToString(" / ") { hostOf(it) })
     is FetchResult.Unreachable -> Problem.Unreachable(code)
 }

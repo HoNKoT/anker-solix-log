@@ -17,6 +17,16 @@ fun normalizeServerUrl(input: String): String {
     return url
 }
 
+/**
+ * 1 つだけ保存していた古い形の接続先を、ローカル / グローバルのどちらの欄に入れるか決める。
+ * メニューバーアプリの移し替えと同じく、Tailscale (…ts.net / 100.x) ならグローバル、それ以外はローカル。
+ */
+fun legacyConnection(url: String, token: String): Connection {
+    val host = hostOf(url)
+    val global = host.endsWith(".ts.net") || host.startsWith("100.")
+    return if (global) Connection("", url, token) else Connection(url, "", token)
+}
+
 /** URL のホスト部分 (403 のメッセージ用) */
 fun hostOf(url: String): String =
     url.substringAfter("://").substringBefore('/').substringBeforeLast(':')
