@@ -62,6 +62,17 @@ RAW_KEEP_DAYS = 3  # 直近この日数ぶんは細かい (SAMPLE_INTERVAL) ま�
 THIN_INTERVAL = 30
 SAMPLE_INTERVAL = 10  # 履歴へ書く間隔 (秒)。設定 (sample_interval) で 10 / 30 / 60 に変えられる
 GAP_CAP = 100  # 行と行の間がこれ以上空いたら、欠測として電力量に足さない (秒)
+# AC 素通し (擬似バイパス): 残量が下限 (機器の backup_soc など) に着くと、AC 出力と同じ W だけ AC 入力から取り、
+# 電池を使わずにそのまま出す。機器はこの状態を値として出さないので、AC 入力と AC 出力が一致していることで見分ける。
+# 許す差は小さくする。% で許すと、AC で充電しながら AC 出力している普通の状態まで素通しに数えてしまう
+BYPASS_TOL_W = 2
+BYPASS_SQL = f"(CASE WHEN ac_in>0 AND ac_out>0 AND ABS(ac_in-ac_out)<={BYPASS_TOL_W} THEN MIN(ac_in,ac_out) END)"
+
+
+def bypass_w(ac_in, ac_out) -> int:
+    """AC 素通しの W (素通しでなければ 0)。判定は BYPASS_SQL と同じ"""
+    i, o = ac_in or 0, ac_out or 0
+    return round(min(i, o)) if i > 0 and o > 0 and abs(i - o) <= BYPASS_TOL_W else 0
 CLOUD_FILE = DATA_DIR / "cloud.json"
 CLOUD_POLL = 2.0       # 秒: MQTT のキャッシュを読む間隔
 CLOUD_STALE = 90       # 秒: これだけ更新が来なければクラウド値は古いとみなす
@@ -821,17 +832,20 @@ class HistoryDB:
                 "rows": [[ids[r[0]], *r[1:]] for r in rows[:limit]]}
 
     def series(self, dev: str, t0: float, t1: float, bucket: int) -> list[list]:
-        """[時刻, 残量%, 入力W, 出力W, 入力最大, 出力最大]。入力が全部 0W (NULL) の区間は入力が None。"""
+        """[時刻, 残量%, 入力W, 出力W, 入力最大, 出力最大, AC 素通しW]。入力が全部 0W (NULL) の区間は入力が None、
+        素通しが無い区間は素通しが None。"""
         i = self._id(dev)
         if i is None:
             return []
+        # 素通しは行ごとに判定してから平均する (区間の平均どうしを比べると、始まりと終わりの区間で一致しない)
         q = (
-            "SELECT CAST(ts/? AS INTEGER)*? AS t, AVG(pct), SUM(pin)*1.0/COUNT(*), AVG(pout), MAX(pin), MAX(pout) "
-            "FROM log WHERE dev=? AND ts>=? AND ts<=? GROUP BY 1 ORDER BY 1"
+            "SELECT CAST(ts/? AS INTEGER)*? AS t, AVG(pct), SUM(pin)*1.0/COUNT(*), AVG(pout), MAX(pin), MAX(pout), "
+            f"SUM({BYPASS_SQL})*1.0/COUNT(*) FROM log WHERE dev=? AND ts>=? AND ts<=? GROUP BY 1 ORDER BY 1"
         )
         with self.lock:
             rows = self.db.execute(q, (bucket, bucket, i, int(t0), int(t1))).fetchall()
-        return [[r[0], round(r[1], 1), None if r[2] is None else round(r[2]), round(r[3]), r[4], r[5]] for r in rows]
+        return [[r[0], round(r[1], 1), None if r[2] is None else round(r[2]), round(r[3]), r[4], r[5],
+                 None if r[6] is None else round(r[6])] for r in rows]
 
     def port_series(self, dev: str, t0: float, t1: float, bucket: int) -> dict[str, list[list]]:
         """ポートごとの [時刻, 平均W]。記録がない区間は 0W。"""
@@ -890,7 +904,7 @@ class HistoryDB:
         if dev:
             devs = [d for d in devs if d[1] == dev]
         cols = ("ts, pct, COALESCE(pin,0), pout, COALESCE(solar,0), "
-                "COALESCE(xfer_in,0), COALESCE(xfer_out,0), COALESCE(xfer_loss,0)")
+                f"COALESCE(xfer_in,0), COALESCE(xfer_out,0), COALESCE(xfer_loss,0), COALESCE({BYPASS_SQL},0)")
         out: list[dict] = []
         for did, dname, model in devs:
             cap = MODEL_WH.get(model, 0)
@@ -918,7 +932,8 @@ class HistoryDB:
                 m["xl_out" if prev[6] else "xl_in"] += prev[7] * k
                 m["p1"] = cur[1]
                 m["pmin"], m["pmax"] = min(m["pmin"], cur[1]), max(m["pmax"], cur[1])
-                m["rows"].append((sol, prev[3], k, prev[1]))
+                # AC 素通しの出力は電池を通らずコンセントから出ているので、ソーラーのクレジットを使わせない
+                m["rows"].append((sol, prev[3] - prev[8], k, prev[1]))
             credit = 0.0
             for d in sorted(days):
                 m = days[d]
@@ -1042,22 +1057,24 @@ class HistoryDB:
             return {"samples": 0}
         with self.lock:
             rows = self.db.execute(
-                "SELECT ts, pct, pin, pout FROM log WHERE dev=? AND ts>=? AND ts<=? ORDER BY ts",
+                f"SELECT ts, pct, pin, pout, COALESCE({BYPASS_SQL},0) FROM log WHERE dev=? AND ts>=? AND ts<=? ORDER BY ts",
                 (i, int(t0), int(t1)),
             ).fetchall()
         if not rows:
             return {"samples": 0}
-        wh_in = wh_out = covered = 0.0
+        wh_in = wh_out = wh_bypass = covered = 0.0
         for prev, cur in zip(rows, rows[1:]):
             dt = min(cur[0] - prev[0], GAP_CAP)  # 欠測区間は足さない
             wh_in += (prev[2] or 0) * dt / 3600  # 入力 NULL は 0W 扱い
             wh_out += prev[3] * dt / 3600
+            wh_bypass += prev[4] * dt / 3600
             covered += dt
         pcts = [r[1] for r in rows]
         return {
             "samples": len(rows),
             "wh_in": round(wh_in, 1),
             "wh_out": round(wh_out, 1),
+            "wh_bypass": round(wh_bypass, 1),  # wh_in と wh_out の両方に含まれている
             "pin_max": max((r[2] or 0) for r in rows),
             "pout_max": max(r[3] for r in rows),
             "pout_avg": round(sum(r[3] for r in rows) / len(rows)),
@@ -2062,6 +2079,8 @@ class Manager:
                 for x in shares:
                     pd = self.registry.get(x["peer"]) if hasattr(self.registry, "get") else None
                     x["peer_name"] = (pd or {}).get("name") or x["peer"]
+            pw = {p.get("key"): p.get("w") for p in item.get("ports") or []}
+            item["bypass_w"] = bypass_w(pw.get("ac_in"), pw.get("ac_out"))
             cap, b_, rh_ = MODEL_WH.get(d["model"]), item.get("battery"), item.get("remaining_h")
             # 給電ぶんを引いて 0W になっただけの機器は待機ではない (残り時間は給電込みの見積もりなので、待機電力に見えてしまう)
             if cap and b_ is not None and rh_ and not shares and (item.get("power_in") or 0) == 0 and (item.get("power_out") or 0) == 0:
@@ -2219,6 +2238,7 @@ def make_handler(mgr: Manager, loop: asyncio.AbstractEventLoop, loopback: bool):
                     series = mgr.db.port_series(dev, t0, t1, b)
                     self._json({"dev": dev, "from": t0, "to": t1, "bucket": b,
                                 "series": series, "totals": mgr.db.port_totals(dev, t0, t1),
+                                "bypass": [[r[0], r[6]] for r in mgr.db.series(dev, t0, t1, b) if r[6]],
                                 "info": {k: {"label": v[0], "dir": v[1]} for k, v in PORT_INFO.items()}})
                 elif u.path == "/summary":
                     t0, t1 = span(q if "from" in q else {**q, "hours": 24})

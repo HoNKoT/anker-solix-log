@@ -4,9 +4,9 @@
 <title>Anker Monitor</title>
 <style>
 :root{--bg:#f2f2f5;--card:#fff;--fg:#1d1d1f;--sub:#6e6e73;--line:#e3e3e8;--soft:#f2f2f5;
-  --in:#1f9d55;--out:#e8590c;--pct:#2f6fed;--low:#e5484d}
+  --in:#1f9d55;--out:#e8590c;--pct:#2f6fed;--low:#e5484d;--pass:#7c3aed}
 @media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--card:#2c2c2e;--fg:#f5f5f7;--sub:#9a9aa0;--line:#3d3d40;--soft:#38383a;
-  --in:#34c759;--out:#ff9f0a;--pct:#5e9bff;--low:#ff6b6b}}
+  --in:#34c759;--out:#ff9f0a;--pct:#5e9bff;--low:#ff6b6b;--pass:#b392ff}}
 *{box-sizing:border-box}
 html,body{margin:0}
 body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;font-size:calc(13px*var(--fs,1));padding:10px 12px 18px}
@@ -89,6 +89,7 @@ select,input{font:inherit;color:var(--fg);background:var(--soft);border:1px soli
 .share{display:flex;align-items:center;gap:6px;justify-content:center;margin-top:8px;font-size:calc(11px*var(--fs,1));color:var(--sub)}
 .share svg{width:calc(14px*var(--fs,1));height:calc(14px*var(--fs,1))}
 .share b{color:var(--fg)}
+.share.pass{color:var(--sub)}.share.pass svg{color:var(--pass)}.share.pass b{color:var(--pass)}
 .name{font-weight:700;font-size:calc(14px*var(--fs,1));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .model{color:var(--sub);font-size:calc(11px*var(--fs,1))}
 .chip{font-size:calc(11px*var(--fs,1));padding:2px 8px;border-radius:10px;background:var(--line);color:var(--sub);white-space:nowrap}
@@ -340,6 +341,7 @@ const SRCICON={ble:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 const PULSE='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h4l3-8 5 16 3-8h5"/></svg>';
 INICON.usb='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><title>USB</title><path d="M12 3v14M12 17a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 11l4-3v-2M12 14l-4-3V9"/><rect x="14.5" y="3.5" width="3" height="3" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/></svg>';
 INICON.plug='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>AC / DC 出力</title><path d="M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0zM12 17v4"/></svg>';
+INICON.pass='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>AC 素通し</title><path d="M2 12h19M16 7l5 5-5 5M7 8v8M11 8v8"/></svg>';
 INICON.share='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><title>電力共有</title><path d="M4 8h14l-3-3M20 16H6l3 3"/></svg>';
 function fmtDHM(h){if(h==null||!(h>0))return '';const m=Math.round(h*60),dd=Math.floor(m/1440),hh=Math.floor(m%1440/60),mm=m%60;
   return (dd?dd+'d ':'')+(dd||hh?String(hh).padStart(dd?2:1,'0')+'h ':'')+String(mm).padStart(dd||hh?2:1,'0')+'m'}
@@ -431,6 +433,14 @@ function grid(x,b,max,rightPct){x.lineWidth=1;x.strokeStyle=css('--line');x.fill
     if(rightPct){x.textAlign='left';x.fillText(Math.round(100*(1-i/2))+'%',b.L+b.w+4,y+3)}}}
 function timeLabels(x,b,t0,t1,H){x.fillStyle=css('--sub');const sp=t1-t0;x.textAlign='left';x.fillText(fmtT(t0,sp),b.L,H-3);
   x.textAlign='center';x.fillText(fmtT((t0+t1)/2,sp),b.L+b.w/2,H-3);x.textAlign='right';x.fillText(fmtT(t1,sp),b.L+b.w,H-3)}
+// AC 素通しの区間を、縦の帯で塗る。list = [[時刻, W], ...] (素通しがある区間だけ)
+function passBands(x,list,X,top,h,bucket){
+  if(!list||!list.length)return;const ts=list.map(a=>a[0]);x.save();
+  for(const run of runs(ts,bucket*2.5)){const a=X(ts[run[0]]),b=Math.max(X(ts[run[run.length-1]]+bucket),a+2);
+    x.fillStyle=rgba(css('--pass'),.13);x.fillRect(a,top,b-a,h);
+    x.fillStyle=rgba(css('--pass'),.7);x.fillRect(a,top,b-a,2);
+    if(b-a>58){x.fillStyle=css('--pass');x.textAlign='left';x.fillText('AC 素通し',a+3,top+13)}}
+  x.restore()}
 function noData(x,W,H,msg){x.fillStyle=css('--sub');x.textAlign='center';x.fillText(msg||'データ待ち',W/2,H/2)}
 
 /* 合計: 残量(透過の面) + 入力/出力(線)。入力が 0W の区間は線を描かない */
@@ -440,6 +450,7 @@ function drawTotal(cv,rows,t0,t1,bucket,hoverT){
   let max=0;for(const r of rows){if(r[2]!=null)max=Math.max(max,r[2]);max=Math.max(max,r[3])}max=niceMax(max||50);
   grid(x,b,max,true);timeLabels(x,b,t0,t1,H);
   if(!rows.length){noData(x,W,H);return null}
+  passBands(x,rows.filter(r=>r[6]).map(r=>[r[0],r[6]]),X,b.T,b.h,bucket);
   const Yp=p=>b.T+b.h*(1-p/100),Yw=v=>b.T+b.h*(1-v/max),gap=bucket*2.5,ts=rows.map(r=>r[0]);
   for(const run of runs(ts,gap)){
     x.fillStyle=rgba(css('--pct'),.17);x.beginPath();x.moveTo(X(ts[run[0]]),b.T+b.h);
@@ -466,6 +477,7 @@ function drawPorts(cv,pd,t0,t1,bucket,hoverT){
   const {x,W,H}=setup(cv);const L=34,R=8,B=16,G=12;const ph=(H-B-G-4)/2;const gap=bucket*2.5;
   const X=t=>L+(t-t0)/(t1-t0)*(W-L-R);
   timeLabels(x,{L,w:W-L-R},t0,t1,H);
+  passBands(x,pd.bypass,X,4,H-B-4,bucket);  // 入力と出力の両方の内訳にまたがる
   const order=Object.keys(pd.series).sort((a,b)=>(pd.totals.find(t=>t.key===b)?.wh||0)-(pd.totals.find(t=>t.key===a)?.wh||0));
   let any=false;
   [['in','入力内訳',4],['out','出力内訳',4+ph+G]].forEach(([dir,title,top])=>{
@@ -528,6 +540,7 @@ function setFold(det,open,save){
 function hoverTip(near,ports,mode){
   const lines=[`<b>${new Date(near[0]*1000).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})+' '+fmtT(near[0],0)}</b>`,
     `残量 <b>${Math.round(near[1])}%</b>`,`入力 <b>${near[2]==null?'0 W (記録なし)':near[2]+' W'}</b>　出力 <b>${near[3]} W</b>`];
+  if(near[6])lines.push(`<span style="color:var(--pass)">AC 素通し <b>${near[6]} W</b></span> (入力をそのまま出力)`);
   if(mode==='ports'&&ports){for(const [k,arr] of Object.entries(ports.series)){const v=arr.find(a=>a[0]===near[0]);if(v)lines.push(`<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${pcol(k)};margin-right:5px"></i>${ports.info[k]?.label||k} <b>${v[1]} W</b>`)}}
   return lines.join('<br>')}
 function cardHover(c){
@@ -573,6 +586,7 @@ function ensureCard(d){
   const cin=el('div','fcol'),cout=el('div','fcol');cin.append(ain,tin);const tloss=el('div','floss');cout.append(aout,tout,tloss);
   const head=el('div','flow');head.append(kin,cin,ic,cout,kout);
   const share=el('div','share');share.style.display='none';
+  const pass=el('div','share pass');pass.style.display='none';
   const outs=el('div','outs');const sw=el('div','sw');
   const detail=el('div','detail');
   // グラフは見たいときだけ開く (開閉は機器ごとに覚える)
@@ -582,9 +596,9 @@ function ensureCard(d){
   const stp=el('div','step gstep');const gb=el('div','gbody');const gin=el('div','gin');gin.append(cw,lg,stp);gb.append(gin);det.append(dsum,gb);
   const gkey='amon-graph-'+d.id;const startOpen=lsGet(gkey,'0')==='1';det.open=startOpen;det.classList.toggle('is-open',startOpen);
   dsum.addEventListener('click',e=>{e.preventDefault();setFold(det,!det.classList.contains('is-open'),gkey)});
-  body.append(top2,head,infoTip,share,outs,sw,detail,det);
+  body.append(top2,head,infoTip,share,pass,outs,sw,detail,det);
   $('cards').append(root);
-  c=S.cards[d.id]={root,fill,stp,ic,ain,aout,cin,cout,kin,kout,src,share,nm,md,chip,pct,sub,info,infoTip,tin,tout,tloss,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
+  c=S.cards[d.id]={root,fill,stp,ic,ain,aout,cin,cout,kin,kout,src,share,pass,nm,md,chip,pct,sub,info,infoTip,tin,tout,tloss,outs,sw,evt,detail,det,dsum,cv,lg,ctip,hoverT:null,rows:[],bucket:60,ports:null,t0:0,t1:0};
   cardHover(c);
   return c;
 }
@@ -626,6 +640,9 @@ function updateCard(c,d){
   c.share.innerHTML=shr.map(x=>{const l=Math.max(0,(x.sent??x.w)-(x.recv??x.w));
     return INICON.share+(x.dir==='out'?'<span><b>'+x.peer_name+'</b> へ給電中 '+x.w+' W':'<span><b>'+x.peer_name+'</b> から給電中 '+x.w+' W')
       +' (履歴では Transfer '+(x.recv??x.w)+' W'+(l>=1?' + '+l+' W loss':'')+' として記録し、入出力には含めない)</span>'}).join('<br>');
+  // AC 素通し (擬似バイパス): 入力 W と出力 W が同じなので、充電にも放電にも見えないことを言葉で補う
+  const bw=d.bypass_w||0;c.pass.style.display=bw>=1?'':'none';
+  if(bw>=1)c.pass.innerHTML=INICON.pass+'<span><b>AC 素通し '+bw+' W</b> (擬似バイパス): AC 入力をそのまま AC 出力へ。電池は使っていません</span>';
   // 出力の内訳: 1W 以上のものだけ。種類 (USB-C / USB-A / DC / AC) は名前で分かる
   const olist=(d.ports||[]).filter(p=>p.dir==='out'&&p.w>=1);portRows(c.outs,olist,'');c.hasOuts=olist.length>0;showOuts(c);
   // スイッチの ON/OFF (読み取りのみ)
@@ -651,6 +668,7 @@ function drawCard(c){
   c.lg.replaceChildren();
   if(S.nowMode==='total'){c.lg.innerHTML='<span><i style="background:var(--in)"></i>入力</span><span><i style="background:var(--out)"></i>出力</span><span><i style="background:var(--pct);opacity:.4"></i>残量 %</span>'}
   else if(c.ports){for(const k of Object.keys(c.ports.series)){const s=el('span');const i=el('i');i.style.background=pcol(k);s.append(i,document.createTextNode(c.ports.info[k]?.label||k));c.lg.append(s)}}
+  if(c.rows.some(r=>r[6]))c.lg.insertAdjacentHTML('beforeend',PASS_LEGEND);
 }
 async function loadCard(id){
   const c=S.cards[id];if(!c||!c.det.open)return;
@@ -846,7 +864,9 @@ function renderHistLegend(){
   const h=S.hist,lg=$('h-legend');lg.replaceChildren();
   if(h.mode==='total'){lg.innerHTML='<span><i style="background:var(--in)"></i>入力</span><span><i style="background:var(--out)"></i>出力</span><span><i style="background:var(--pct);opacity:.4"></i>残量 %</span>'}
   else if(h.ports){for(const t of h.ports.totals.filter(t=>t.dir!=='loss')){const s=el('span');const i=el('i');i.style.background=pcol(t.key);s.append(i,document.createTextNode(t.label));lg.append(s)}}
+  if(h.rows.some(r=>r[6]))lg.insertAdjacentHTML('beforeend',PASS_LEGEND);
 }
+const PASS_LEGEND='<span title="AC 入力をそのまま AC 出力へ流していた区間 (擬似バイパス)。電池は使っていない"><i style="background:var(--pass);opacity:.35"></i>AC 素通し</span>';
 function renderSummary(){
   const s=S.hist.summary||{},box=$('h-sum');box.replaceChildren();
   if(!s.samples){box.append(el('div','sub','この期間の記録はありません'));return}
@@ -856,6 +876,7 @@ function renderSummary(){
   cell(s.pct_min+' 〜 '+s.pct_max+' %','残量の範囲');cell(s.pct_start+' → '+s.pct_end+' %','期間の始めと終わり');
   const x=xferTotals(S.hist.ports);
   if(x)cell(fWh(x.wh),'Transfer ('+x.label+')'+(x.loss>=0.05?' · '+fWh(x.loss)+' loss':'')+'。入出力には含めない');
+  if(s.wh_bypass>=0.05)cell(fWh(s.wh_bypass),'AC 素通し (入力をそのまま出力。入力・出力の両方に含む)');
 }
 // 機器どうしの給電 (Transfer) の期間合計。送り側は xfer_out、受け側は xfer_in。ロスは両側に同じ値が入っている
 function xferTotals(p){
@@ -890,6 +911,7 @@ function hoverInit(){
     h.hoverT=near[0];drawHist();
     const lines=[`<b>${fmtT(near[0],0).replace(/^/,new Date(near[0]*1000).toLocaleDateString('ja-JP',{month:'numeric',day:'numeric'})+' ')}</b>`,
       `残量 <b>${Math.round(near[1])}%</b>`,`入力 <b>${near[2]==null?'0 W (記録なし)':near[2]+' W'}</b>　出力 <b>${near[3]} W</b>`];
+  if(near[6])lines.push(`<span style="color:var(--pass)">AC 素通し <b>${near[6]} W</b></span> (入力をそのまま出力)`);
     if(h.mode==='ports'&&h.ports){for(const [k,arr] of Object.entries(h.ports.series)){const v=arr.find(a=>a[0]===near[0]);if(v)lines.push(`<i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${pcol(k)};margin-right:5px"></i>${h.ports.info[k]?.label||k} <b>${v[1]} W</b>`)}}
     tip.innerHTML=lines.join('<br>');tip.hidden=false;
     const tw=tip.offsetWidth;let left=e.clientX-rect.left+12;if(left+tw>rect.width)left=e.clientX-rect.left-tw-12;
