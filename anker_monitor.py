@@ -1532,6 +1532,9 @@ def cloud_read(v: dict) -> dict:
         "firmware": v.get("sw_version"),
         # 出力スイッチの ON/OFF (読み取りのみ)。機種に無いものは None
         "switches": {"ac_out": onoff("ac_output_power_switch"), "dc_out": onoff("dc_output_power_switch")},
+        # 動作モード (C2000 Gen 2): Time-of-Use では残量が backup_soc に着くと放電を止め、AC 出力を AC 入力から素通しする。
+        # 機種に無い項目は None のまま返す (送ってこない機種で OFF と表示しないため)
+        "usage_mode": whole(_cnum(v, "usage_mode")), "backup_soc": whole(_cnum(v, "backup_soc")),
     }
 
 

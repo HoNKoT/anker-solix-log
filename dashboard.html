@@ -152,6 +152,7 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .sw{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .sw span{font-size:calc(11px*var(--fs,1));padding:2px 9px;border-radius:10px;background:var(--line);color:var(--sub);white-space:nowrap}
 .sw span.on{background:color-mix(in srgb,var(--out) 20%,transparent);color:var(--out)}
+.sw span.on.pm{background:color-mix(in srgb,var(--pass) 20%,transparent);color:var(--pass)}
 details.gfold{margin-top:5px}
 .dev .outs{margin-top:6px}
 details.gfold>summary{cursor:pointer;color:var(--sub);font-size:calc(12px*var(--fs,1));list-style:none;user-select:none;padding:0}
@@ -652,6 +653,7 @@ function updateCard(c,d){
   if(!c.evt.firstChild){const t=el('span');const a=el('a','cp','⧉');a.title='直近のデータをコピー';a.onclick=()=>copyRecent(c,a);const ev=el('span','evi');ev.innerHTML=PULSE;ev.title='最後のイベント (機器から値が届いた時刻)';c.evt.append(a,ev,t);c.evtT=t}
   c.evt.style.display=d.event_at?'flex':'none';tickEvt(c);
   for(const [k,l] of Object.entries(SWL)){const v=d.switches?d.switches[k]:null;if(!v)continue;c.sw.append(el('span','on',l+' ON'))}
+  const pm=passMode(d);if(pm){const s=el('span',pm.on?'on pm':'',pm.text);s.title=pm.tip;c.sw.append(s)}
   c.sw.style.display=c.sw.childElementCount?'':'none';
   c.detail.textContent=d.detail||'';c.detail.style.display=d.detail?'':'none';
   c.fill.style.height=(d.battery||0)+'%';
@@ -866,6 +868,14 @@ function renderHistLegend(){
   else if(h.ports){for(const t of h.ports.totals.filter(t=>t.dir!=='loss')){const s=el('span');const i=el('i');i.style.background=pcol(t.key);s.append(i,document.createTextNode(t.label));lg.append(s)}}
   if(h.rows.some(r=>r[6]))lg.insertAdjacentHTML('beforeend',PASS_LEGEND);
 }
+// 素通しモード: Time-of-Use (usage_mode=1) のときだけ、残量が backup_soc に着くと AC 入力の素通しに切り替わる。
+// 項目を送ってこない機種では null (OFF と言い切らない)
+const USAGE_MODE={0:'標準',1:'Time-of-Use',2:'自家消費',3:'カスタム'};
+function passMode(d){
+  if(d.usage_mode==null)return null;const name=USAGE_MODE[d.usage_mode]||('モード '+d.usage_mode);
+  if(d.usage_mode===1&&d.backup_soc!=null)return {on:true,text:'素通しモード ON · '+d.backup_soc+'% で切替',
+    tip:'動作モード: '+name+'。残量が '+d.backup_soc+'% まで下がると放電を止め、AC 出力を AC 入力からそのまま流します (AC 入力が無ければ止まります)'};
+  return {on:false,text:'素通しモード OFF',tip:'動作モード: '+name+'。残量が下がっても AC 入力の素通しには切り替わりません'}}
 const PASS_LEGEND='<span title="AC 入力をそのまま AC 出力へ流していた区間 (擬似バイパス)。電池は使っていない"><i style="background:var(--pass);opacity:.35"></i>AC 素通し</span>';
 function renderSummary(){
   const s=S.hist.summary||{},box=$('h-sum');box.replaceChildren();
