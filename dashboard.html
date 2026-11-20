@@ -24,6 +24,14 @@ h3{margin:0 0 8px;font-size:calc(12px*var(--fs,1));color:var(--sub);font-weight:
 .seg button{border:0;background:transparent;padding:3px 10px;border-radius:5px;font-size:calc(11px*var(--fs,1));color:var(--sub)}
 .seg button.on{background:var(--card);color:var(--fg);font-weight:600;box-shadow:0 1px 1px rgba(0,0,0,.1)}
 .sp{flex:1}
+.today{padding:8px 14px}
+.today .thead{display:flex;align-items:baseline;gap:6px 14px;flex-wrap:wrap;cursor:pointer;user-select:none}
+.today .thead .tw{color:var(--sub);display:inline-block;transition:transform .2s}.today.open .thead .tw{transform:rotate(90deg)}
+.today .thead .tl{font-weight:600}
+.today .thead .tv{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--sub);font-size:calc(11px*var(--fs,1))}
+.today .thead .tv b{font-size:calc(16px*var(--fs,1));margin-right:2px}
+.today .thead .in b{color:var(--in)}.today .thead .out b{color:var(--out)}
+.today .dbig{margin:8px 0 2px 1.1em}
 .nwx{display:flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .nwx .ic{font-size:calc(18px*var(--fs,1));line-height:1}.nwx b{font-size:calc(17px*var(--fs,1));line-height:1}
 .nwx small{color:var(--sub);font-size:calc(11px*var(--fs,1))}
@@ -128,6 +136,7 @@ details.gfold.is-open>summary::before{transform:rotate(45deg)}
 .dbig div{min-width:0}.dbig b{display:block;font-size:calc(19px*var(--fs,1));font-variant-numeric:tabular-nums}
 .dbig small{color:var(--sub);font-size:calc(10px*var(--fs,1))}
 .dbig .yen b{color:var(--in)}
+.dbig .pass b,.dtab td.pass{color:var(--pass)}
 .u{font-size:.58em;font-weight:500;margin-left:1px}
 .dtab td{white-space:nowrap}
 .price{display:flex;align-items:center;gap:6px;font-size:calc(12px*var(--fs,1));color:var(--sub);margin-top:10px}
@@ -241,6 +250,10 @@ a.ext{font-size:calc(11px*var(--fs,1));color:var(--pct);text-decoration:none;whi
     <div class="nwx" id="now-wx" hidden></div>
   </div>
   <div class="hwx" id="now-hourly" hidden></div>
+  <div class="card today" id="now-today" hidden>
+    <div class="thead" id="now-today-head" role="button" tabindex="0" aria-expanded="false"></div>
+    <div class="dbig" id="now-today-body" hidden></div>
+  </div>
   <div id="cards"></div>
 </section>
 
@@ -678,7 +691,23 @@ async function loadCard(id){
   try{const h=await api('/api/history?'+q);c.rows=h.rows;c.bucket=h.bucket;c.t0=h.from;c.t1=h.to;
     c.ports=S.nowMode==='ports'?await api('/ports?'+q):null;drawCard(c)}catch(e){}
 }
-function refreshNow(){for(const id of Object.keys(S.cards))loadCard(id)}
+function refreshNow(){for(const id of Object.keys(S.cards))loadCard(id);loadToday()}
+// 今日 (0 時から) の全機器のまとめ。閉じているときは入力・出力だけ、開くと履歴の月のまとめと同じ項目を出す。
+// 節約はソーラーの貯めを記録の最初から積み上げるので、履歴と同じく全期間をもらって今日の分を取り出す
+async function loadToday(){
+  const t0=new Date();t0.setHours(0,0,0,0);let r;
+  try{r=await api('/api/daily?from=0&to='+(Math.floor(t0/1000)+86400))}catch(e){return}  // to の日付より前の日だけ返るので明日にする
+  const day=t0.getFullYear()+'-'+pad2(t0.getMonth()+1)+'-'+pad2(t0.getDate());
+  const {all,xf}=dailyAgg(r.rows||[],'all');const m=all.get(day);const box=$('now-today');box.hidden=!m;if(!m)return;
+  const x=xf(m);const s={...m,xt:x.t,xl:x.l};const w=(r.weather||{})[day];
+  const open=lsGet('amon-today-open','0')==='1';box.classList.toggle('open',open);
+  const head=$('now-today-head'),body=$('now-today-body');head.setAttribute('aria-expanded',String(open));
+  head.innerHTML=`<span class="tw">▸</span><span class="tl">今日 ${t0.getMonth()+1}/${t0.getDate()} (${DOW[t0.getDay()]})</span>`
+    +`<span class="tv in"><b>${kv(s.wh_in)}</b>kWh 入力</span><span class="tv out"><b>${kv(s.wh_out)}</b>kWh 出力</span>`;
+  body.hidden=!open;if(open)body.innerHTML=dailyBig(s,r.settings.price_per_kwh/1000,w&&w.sun_h!=null?w.sun_h:null);
+  const flip=()=>{lsSet('amon-today-open',open?'0':'1');loadToday()};
+  head.onclick=flip;head.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();flip()}};
+}
 function renderNowControls(){
   const i=nearest(NOW_STEPS,S.nowHours),go=d=>{S.nowHours=NOW_STEPS[i+d];lsSet('amon-nowh',S.nowHours);renderNowControls();refreshNow()};
   for(const c of Object.values(S.cards))stepper(c.stp,'直近 '+spanLabel(NOW_STEPS[i]*3600),i>0,i<NOW_STEPS.length-1,()=>go(-1),()=>go(1));
@@ -741,25 +770,41 @@ async function loadDaily(){
   const D=S.daily||(S.daily={shown:3,scope:'all',price:39.5,open:new Set()});
   seg($('d-scope'),[['all','全機器'],['one','この機器']],D.scope,k=>{D.scope=k;loadDaily()});
   // ソーラーの貯めは記録の最初から積み上げるので、全期間をもらう (月別の表にも全期間を使う)
-  let r;try{r=await loading('d-load',api('/api/daily?from=0&to='+Math.floor(Date.now()/1000)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):'')))}catch(e){return}
+  // /api/daily は to の日付より前の日だけ返すので、to を明日にして今日 (途中まで) も含める
+  let r;try{r=await loading('d-load',api('/api/daily?from=0&to='+(Math.floor(Date.now()/1000)+86400)+(D.scope==='one'&&S.hist.dev?'&dev='+encodeURIComponent(S.hist.dev):'')))}catch(e){return}
   D.price=r.settings.price_per_kwh;const pi=$('d-price');if(document.activeElement!==pi)pi.value=D.price;
   D.rows=r.rows;D.weather=r.weather||{};D.place=r.settings.location||null;renderDaily();
 }
 // 月の切り替え・月の開閉は、取ってある全期間の行から描き直すだけ
-function renderDaily(){
-  const D=S.daily;if(!D.rows)return;
+// 日ごとの行 (機器ごと) を日ごとに足し、節約を割り振る。履歴の月の表と「いま」の今日の欄で同じ数え方にする
+const dayZero=()=>({wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0,wh_xfer_in:0,wh_xfer_out:0,wh_xfer_loss_in:0,wh_xfer_loss_out:0,wh_bypass:0});
+function dailyAgg(rows,scope){
   const all=new Map();
-  const z=()=>({wh_in:0,wh_out:0,wh_solar:0,wh_ac:0,wh_saved:0,wh_loss:0,wh_xfer_in:0,wh_xfer_out:0,wh_xfer_loss_in:0,wh_xfer_loss_out:0});
-  for(const x of D.rows){const m=all.get(x.day)||z();for(const k of Object.keys(m))m[k]+=x[k]||0;all.set(x.day,m)}
+  for(const x of rows){const m=all.get(x.day)||dayZero();for(const k of Object.keys(m))m[k]+=x[k]||0;all.set(x.day,m)}
   // 節約: ソーラー入力を対象の機器全体で貯め続け、出力 (Transfer は含まない) はその貯めから使えた分だけ節約とする。
   // 機器ごとに貯めると、ソーラーが入る機器 (C2000) と出力する機器 (C300 DC) が違うとき節約がほぼ 0 になる。
-  // 日の中の時刻順は見ない (その日のソーラーは、その日の出力より先に入ったとみなす)
+  // 日の中の時刻順は見ない (その日のソーラーは、その日の出力より先に入ったとみなす)。
+  // AC 素通しの出力はコンセントからそのまま出た分なので、貯めを使わせない
   let credit=0;
-  for(const day of [...all.keys()].sort()){const m=all.get(day);credit+=m.wh_solar;m.wh_saved=Math.min(m.wh_out,credit);credit-=m.wh_saved}
+  for(const day of [...all.keys()].sort()){const m=all.get(day);credit+=m.wh_solar;m.wh_saved=Math.min(Math.max(0,m.wh_out-m.wh_bypass),credit);credit-=m.wh_saved}
   // Transfer: 全機器では送り側と受け側に同じ量が入っているので片側だけ数える (送り側の記録が無ければ受け側)。
   // 1台なら、その機器の受け取り + 送り出し
-  const xf=m=>D.scope==='all'?(m.wh_xfer_out>0?{t:m.wh_xfer_out,l:m.wh_xfer_loss_out}:{t:m.wh_xfer_in,l:m.wh_xfer_loss_in})
+  const xf=m=>scope==='all'?(m.wh_xfer_out>0?{t:m.wh_xfer_out,l:m.wh_xfer_loss_out}:{t:m.wh_xfer_in,l:m.wh_xfer_loss_in})
     :{t:m.wh_xfer_in+m.wh_xfer_out,l:m.wh_xfer_loss_in+m.wh_xfer_loss_out};
+  return {all,xf};
+}
+// 期間 (月 / 今日) のまとめ。s は dayZero の各値 + xt / xl (Transfer とそのロス)。sun は日照時間 (無ければ null)
+function dailyBig(s,rate,sun){
+  return `<div class="yen"><b>${yenU(s.wh_saved*rate)}</b><small>節約 (ソーラーで賄えた ${kwh(s.wh_saved)})</small></div>
+      <div><b>${kwhU(s.wh_in)}</b><small>入力 (うちソーラー ${kwh(s.wh_solar)})</small></div><div><b>${kwhU(s.wh_out)}</b><small>出力 (≒ ${yen(s.wh_out*rate)})</small></div>`
+    +(s.xt>=0.05?`<div><b>${kwhU(s.xt)}</b><small>Transfer${s.xl>=0.05?' ('+kwh(s.xl)+' loss)':''} · 入出力には含めない</small></div>`:'')
+    +(s.wh_bypass>=0.5?`<div class="pass"><b>${kwhU(s.wh_bypass)}</b><small>AC 素通し · 入力・出力の両方に含む</small></div>`:'')
+    +`<div><b>${kwhU(s.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`
+    +(sun!=null?`<div><b>${sun.toFixed(0)}<span class="u">時間</span></b><small>日照 (天気の記録から)</small></div>`:'');
+}
+function renderDaily(){
+  const D=S.daily;if(!D.rows)return;
+  const {all,xf}=dailyAgg(D.rows,D.scope);const z=dayZero;
   // 月の値は日ごとの値を足す (日によって送り側の記録だけ欠けていても、日の行の合計と合うように)
   const months=new Map();
   for(const [day,m] of all){const k=day.slice(0,7);const s=months.get(k)||{...z(),xt:0,xl:0,days:[]};
@@ -785,19 +830,15 @@ function renderDaily(){
     const head=el('div','mhead');head.innerHTML=`<span class="tw">▸</span><b>${y}年${+mo}月</b>`;
     if(!s){head.innerHTML+=`<span class="sub">記録はありません</span>`;blk.append(head);box.append(blk);continue}
     head.onclick=()=>{D.open.has(k)?D.open.delete(k):D.open.add(k);renderDaily()};
-    const big=el('div','dbig');const hasX=s.xt>=0.05;
-    big.innerHTML=`<div class="yen"><b>${yenU(s.wh_saved*rate)}</b><small>節約 (ソーラーで賄えた ${kwh(s.wh_saved)})</small></div>
-      <div><b>${kwhU(s.wh_in)}</b><small>入力 (うちソーラー ${kwh(s.wh_solar)})</small></div><div><b>${kwhU(s.wh_out)}</b><small>出力 (≒ ${yen(s.wh_out*rate)})</small></div>`
-      +(hasX?`<div><b>${kwhU(s.xt)}</b><small>Transfer${s.xl>=0.05?' ('+kwh(s.xl)+' loss)':''} · 入出力には含めない</small></div>`:'')
-      +`<div><b>${kwhU(s.wh_loss)}</b><small>待機・変換ロス (推定)</small></div>`
-      +(sunH(s.days)!=null?`<div><b>${sunH(s.days).toFixed(0)}<span class="u">時間</span></b><small>日照 (天気の記録から)</small></div>`:'');
+    const big=el('div','dbig');const hasX=s.xt>=0.05,hasP=s.wh_bypass>=0.5;
+    big.innerHTML=dailyBig(s,rate,sunH(s.days));
     head.append(big);blk.append(head);
     if(open){const t=el('table','dtab');
-      t.innerHTML=`<tr><th>日</th><th>入力${Uh}</th><th>出力${Uh}</th>`+(hasX?`<th>Transfer${Uh}</th>`:'')+`<th>ソーラー${Uh}</th><th>節約</th></tr>`;
+      t.innerHTML=`<tr><th>日</th><th>入力${Uh}</th><th>出力${Uh}</th>`+(hasX?`<th>Transfer${Uh}</th>`:'')+(hasP?`<th>AC 素通し${Uh}</th>`:'')+`<th>ソーラー${Uh}</th><th>節約</th></tr>`;
       for(const day of s.days.sort().reverse()){const m=all.get(day);const dt=new Date(day+'T00:00:00');const x=xf(m);
         const tr=el('tr',dt.getDay()===0||dt.getDay()===6?'wk':'');
         tr.innerHTML=`<td>${dt.getMonth()+1}/${dt.getDate()} (${DOW[dt.getDay()]})${wxCell(day)}</td><td class="in">${n(m.wh_in)}</td><td class="out">${n(m.wh_out)}</td>`
-          +(hasX?`<td class="xf">${xfTxt(x.t,x.l)}</td>`:'')+`<td>${n(m.wh_solar)}</td><td>${yenU(m.wh_saved*rate)}</td>`;t.append(tr)}
+          +(hasX?`<td class="xf">${xfTxt(x.t,x.l)}</td>`:'')+(hasP?`<td class="pass">${m.wh_bypass>=0.5?n(m.wh_bypass):''}</td>`:'')+`<td>${n(m.wh_solar)}</td><td>${yenU(m.wh_saved*rate)}</td>`;t.append(tr)}
       blk.append(t)}
     box.append(blk)}
   const rest=keys.length-D.shown,more=$('d-more');more.hidden=rest<=0;
